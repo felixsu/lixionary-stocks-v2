@@ -11,6 +11,7 @@ from app.worker.jobs import (
     poll_all,
     recalc_coverage,
     refresh_hourly,
+    run_news_cycle,
 )
 
 log = get_logger(__name__)
@@ -60,6 +61,15 @@ def build_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour=2, minute=0, timezone=settings.app_timezone),
         id="nightly_daily",
         name="Nightly daily refresh",
+        replace_existing=True,
+        **common,
+    )
+
+    scheduler.add_job(
+        run_news_cycle,
+        CronTrigger(minute=f"*/{settings.news_fetch_interval_min}", timezone=settings.app_timezone),
+        id="news_cycle",
+        name="News fetch + LLM analysis",
         replace_existing=True,
         **common,
     )

@@ -12,6 +12,7 @@ import { useCallback, useSyncExternalStore } from "react";
 
 import type { Bar } from "./api";
 import type { AiSignal, IchimokuResult, MacdResult, SupportResistance } from "./indicators";
+import type { Scorecard } from "./signals";
 import type { SessionRvol, VolumeSpike } from "./volume";
 
 export type ProviderId = "gemini" | "minimax" | "openai";
@@ -207,6 +208,7 @@ export interface AnalysisInput {
   ichimoku: IchimokuResult;
   sr: SupportResistance;
   heuristic: AiSignal;
+  scorecard: Scorecard | null;
   sessionVolume: SessionRvol | null;
   volumeSpike: VolumeSpike | null;
   ihsgCorrelation: number | null;
@@ -278,6 +280,22 @@ export function buildAnalysisMessages(input: AnalysisInput): ChatMessage[] {
       reasons: input.heuristic.reasons,
       note: "simple rule-based read; you may confirm or dispute it",
     },
+    technical_scorecard: input.scorecard
+      ? {
+          overall: input.scorecard.overall,
+          counts: {
+            bullish: input.scorecard.bullish,
+            neutral: input.scorecard.neutral,
+            bearish: input.scorecard.bearish,
+          },
+          signals: input.scorecard.signals.map((s) => ({
+            name: s.name,
+            value: s.value,
+            verdict: s.verdict,
+          })),
+          note: "ten rule-based verdicts shown to the user; explain agreements or disagreements",
+        }
+      : null,
   };
 
   return [

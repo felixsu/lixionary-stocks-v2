@@ -192,3 +192,102 @@ export function aiSignal(
   const stance: Stance = score >= 1 ? "bullish" : score <= -1 ? "bearish" : "neutral";
   return { stance, reasons: reasons.slice(0, 3) };
 }
+
+// ── Stochastic oscillator (%K smoothed over kPeriod highs/lows, %D = SMA of %K) ──
+
+export interface StochasticResult {
+  k: (number | null)[];
+  d: (number | null)[];
+}
+
+export function stochastic(bars: Bar[], kPeriod = 14, dPeriod = 3): StochasticResult {
+  const k: (number | null)[] = new Array(bars.length).fill(null);
+  for (let i = kPeriod - 1; i < bars.length; i++) {
+    const hi = rollingExtreme(bars, kPeriod, "max", i);
+    const lo = rollingExtreme(bars, kPeriod, "min", i);
+    k[i] = hi === lo ? 50 : ((bars[i].c - lo) / (hi - lo)) * 100;
+  }
+  const d: (number | null)[] = new Array(bars.length).fill(null);
+  for (let i = 0; i < bars.length; i++) {
+    const window = k.slice(Math.max(0, i - dPeriod + 1), i + 1).filter((v): v is number => v != null);
+    if (window.length === dPeriod) d[i] = window.reduce((s, v) => s + v, 0) / dPeriod;
+  }
+  return { k, d };
+}
+
+// ── ADX / DMI (Wilder smoothing) ────────────────────────────────────────────
+
+export interface AdxResult {
+  adx: (number | null)[];
+  plusDi: (number | null)[];
+  minusDi: (number | null)[];
+}
+
+export function adx(bars: Bar[], period = 14): AdxResult {
+  const n = bars.length;
+  const out: AdxResult = {
+    adx: new Array(n).fill(null),
+    plusDi: new Array(n).fill(null),
+    minusDi: new Array(n).fill(null),
+  };
+  if (n < period * 2 + 1) return out;
+
+  let smTr = 0;
+  let smPlus = 0;
+  let smMinus = 0;
+  let adxAcc: number | null = null;
+  for (let i = 1; i < n; i++) {
+    const cur = bars[i];
+    const prev = bars[i - 1];
+    const tr = Math.max(cur.h - cur.l, Math.abs(cur.h - prev.c), Math.abs(cur.l - prev.c));
+    const upMove = cur.h - prev.h;
+    const downMove = prev.l - cur.l;
+    const plusDm = upMove > downMove && upMove > 0 ? upMove : 0;
+    const minusDm = downMove > upMove && downMove > 0 ? downMove : 0;
+
+    if (i <= period) {
+      // initial accumulation
+      smTr += tr;
+      smPlus += plusDm;
+      smMinus += minusDm;
+      if (i < period) continue;
+    } else {
+      // Wilder smoothing
+      smTr = smTr - smTr / period + tr;
+      smPlus = smPlus - smPlus / period + plusDm;
+      smMinus = smMinus - smMinus / period + minusDm;
+    }
+
+    const pdi = smTr ? (smPlus / smTr) * 100 : 0;
+    const mdi = smTr ? (smMinus / smTr) * 100 : 0;
+    out.plusDi[i] = pdi;
+    out.minusDi[i] = mdi;
+    const dx = pdi + mdi ? (Math.abs(pdi - mdi) / (pdi + mdi)) * 100 : 0;
+
+    if (i < period * 2) {
+      adxAcc = adxAcc == null ? dx : adxAcc + dx;
+      if (i === period * 2 - 1 && adxAcc != null) {
+        adxAcc = adxAcc / period;
+        out.adx[i] = adxAcc;
+      }
+    } else if (adxAcc != null) {
+      adxAcc = (adxAcc * (period - 1) + dx) / period;
+      out.adx[i] = adxAcc;
+    }
+  }
+  return out;
+}
+
+// ── On-Balance Volume ───────────────────────────────────────────────────────
+
+/** Returns null when the series carries no volume (e.g. index intraday). */
+export function obv(bars: Bar[]): number[] | null {
+  if (!bars.length || bars.some((b) => b.v == null)) return null;
+  const out: number[] = new Array(bars.length);
+  out[0] = 0;
+  for (let i = 1; i < bars.length; i++) {
+    const dir = bars[i].c > bars[i - 1].c ? 1 : bars[i].c < bars[i - 1].c ? -1 : 0;
+    out[i] = out[i - 1] + dir * (bars[i].v ?? 0);
+  }
+  return out;
+}

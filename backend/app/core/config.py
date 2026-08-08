@@ -35,8 +35,47 @@ class Settings(BaseSettings):
     backfill_1h_days: int = 730
     backfill_1d_period: str = "max"
 
+    # --- News pipeline ---
+    # Verified working Indonesian feeds (energy / politics / finance / market).
+    # Override with a comma-separated NEWS_FEEDS env var: "category|url,category|url".
+    news_feeds: str = (
+        "finance|https://www.antaranews.com/rss/ekonomi.xml,"
+        "politics|https://www.antaranews.com/rss/politik.xml,"
+        "market|https://www.cnbcindonesia.com/market/rss,"
+        "finance|https://www.cnbcindonesia.com/news/rss,"
+        "finance|https://finance.detik.com/rss,"
+        "market|https://investasi.kontan.co.id/rss,"
+        "market|https://news.google.com/rss/search?q=IHSG&hl=id&gl=ID&ceid=ID:id,"
+        "energy|https://news.google.com/rss/search?q=energi%20indonesia&hl=id&gl=ID&ceid=ID:id,"
+        "politics|https://news.google.com/rss/search?q=politik%20indonesia%20ekonomi&hl=id&gl=ID&ceid=ID:id"
+    )
+    news_fetch_interval_min: int = 30
+    news_analysis_batch: int = 20
+    news_retention_days: int = 60
+
+    # --- Worker LLM (news analysis). Empty = fetch-only mode. ---
+    llm_provider: str = ""  # gemini | minimax | openai
+    llm_model: str = ""
+    llm_api_key: str = ""
+
     # --- Retention ---
     ingest_runs_ttl_days: int = 30
+
+    @property
+    def news_feed_list(self) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for entry in self.news_feeds.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            category, _, url = entry.partition("|")
+            if url:
+                out.append((category.strip(), url.strip()))
+        return out
+
+    @property
+    def llm_configured(self) -> bool:
+        return bool(self.llm_provider and self.llm_model and self.llm_api_key)
 
     @property
     def cors_origin_list(self) -> list[str]:
