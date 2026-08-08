@@ -1,0 +1,33 @@
+/* ===========================================================================
+   Lixionary — Spacing, radius, elevation
+   Eight-point scale with a 4px micro-step. Depth comes from surface color,
+   not shadow — shadows are reserved for dropdowns and modals only.
+   =========================================================================== */
+
+:root {
+  /* ── Spacing (4 · 8 · 12 · 16 · 24 · 32 · 48 · 64) ──────────────── */
+  --space-xxs: 4px;
+  --space-xs:  8px;
+  --space-sm:  12px;
+  --space-md:  16px;
+  --space-lg:  24px;
+  --space-xl:  32px;
+  --space-xxl: 48px;
+  --space-section: 64px;
+
+  /* ── Radius ─────────────────────────────────────────────────────── */
+  --radius-xs:   4px;   /* wells */
+  --radius-sm:   6px;
+  --radius-md:   8px;   /* buttons + inputs */
+  --radius-lg:   12px;  /* cards + panels */
+  --radius-xl:   16px;  /* modals + drawers */
+  --radius-pill: 9999px;
+  --radius-full: 9999px;
+
+  /* ── Elevation ──────────────────────────────────────────────────── */
+  --shadow-dropdown: 0 4px 12px rgba(20, 20, 19, 0.08);
+  --shadow-modal:    0 24px 48px -12px rgba(20, 20, 19, 0.18);
+
+  /* ── Focus ring (indigo @ 15%) ──────────────────────────────────── */
+  --ring-focus: 0 0 0 3px rgba(79, 70, 229, 0.15);
+}

@@ -1,0 +1,45 @@
+/* ===========================================================================
+   Lixionary — Base element styles + color / focus utilities
+   =========================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-canvas);
+  color: var(--color-body);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body-md);
+  line-height: var(--lh-body-md);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button { font-family: inherit; cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+input, select, textarea { font-family: inherit; font-size: inherit; color: var(--color-ink); }
+input::placeholder, textarea::placeholder { color: var(--color-muted-soft); }
+
+a { color: var(--color-primary); text-decoration: none; }
+a:hover { color: var(--color-primary-active); text-decoration: underline; }
+
+/* Scrollbar quieting */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-hairline); border-radius: 8px; border: 2px solid var(--color-canvas); }
+::-webkit-scrollbar-thumb:hover { background: var(--color-muted-soft); }
+
+/* ── Color text utilities ──────────────────────────────────────── */
+.muted       { color: var(--color-muted); }
+.muted-soft  { color: var(--color-muted-soft); }
+.ink         { color: var(--color-ink); }
+.body-strong { color: var(--color-body-strong); }
+.mono        { font-family: var(--font-mono); }
+
+/* ── Focus ring helper ─────────────────────────────────────────── */
+.focus-ring:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--ring-focus);
+}

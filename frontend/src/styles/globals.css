@@ -1,0 +1,24 @@
+/* Lixionary Design System entry point (fonts arrive via next/font). */
+@import "./colors.css";
+@import "./typography.css";
+@import "./spacing.css";
+@import "./base.css";
+@import "./kit.css";
+
+/* next/font exposes the self-hosted families as CSS variables on <html>;
+   route them into the design system's font tokens. */
+:root {
+  --font-serif: var(--font-next-serif), "Tiempos Headline", Georgia, serif;
+  --font-sans: var(--font-next-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: var(--font-next-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Page-level tweaks from the design prototype */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--color-hairline); border-radius: 8px; }
+
+/* Loading shimmer for skeletons */
+@keyframes lx-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

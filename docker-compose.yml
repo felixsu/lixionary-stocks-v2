@@ -66,5 +66,26 @@ services:
     # drop in-flight ingestion, and the API must stay independently restartable.
     command: ["python", "-m", "app.worker"]
 
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Baked into the Next.js rewrite at build time (see frontend/Dockerfile).
+        API_INTERNAL_URL: http://api:8850
+    container_name: lixionary-stock-v2-frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      TZ: Asia/Jakarta
+    ports:
+      - "127.0.0.1:8853:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
 volumes:
   mongo_data:
