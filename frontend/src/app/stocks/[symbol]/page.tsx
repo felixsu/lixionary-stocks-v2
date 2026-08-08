@@ -2,17 +2,17 @@
 
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
-import { use, useCallback, useMemo, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 
 import { Badge } from "@/components/Badge";
-import { CanvasChart } from "@/components/CanvasChart";
 import { ErrorCard } from "@/components/ErrorCard";
+import { type ChartView, InteractiveChart } from "@/components/InteractiveChart";
 import { LlmAnalysisCard } from "@/components/LlmAnalysisCard";
 import { Skeleton } from "@/components/Skeleton";
 import { TimeframeSwitcher } from "@/components/TimeframeSwitcher";
 import { type CandlesOut, type SymbolOut, IHSG_SYMBOL, candlesKey, fetcher } from "@/lib/api";
-import { CHART_COLORS, drawIndicatorPanel, drawPriceVolume } from "@/lib/chart-draw";
+import { CHART_COLORS, drawPriceVolume, drawVolumePanel } from "@/lib/chart-draw";
 import { useDefaultTimeframe } from "@/lib/favorites";
 import {
   aiSignal,
@@ -26,12 +26,28 @@ import {
 import type { AnalysisInput } from "@/lib/llm";
 import { badgeClassForPct, fmtPct, fmtPrice, metricsFromDaily } from "@/lib/metrics";
 import { type TimeframeId } from "@/lib/timeframes";
+import { type XViewport } from "@/lib/viewport";
 import { classifyRvol, dailyRvol, fmtVolume, sessionRvol, volumeSpike } from "@/lib/volume";
 
 const REFRESH_MS = 60_000;
 
-// Enough history that Ichimoku's 52-bar lookback has warmup beyond the window.
-const DETAIL_LIMIT = 180;
+// Fetched depth (roomy, for zooming out); the initial view shows the last 180
+// bars so Ichimoku's 52-bar lookback still has warmup beyond the window.
+const DETAIL_LIMIT = 400;
+const INITIAL_DETAIL_VIEW = 180;
+
+/** Overlay toggles persisted alongside the other UI prefs. Default: shown. */
+function useOverlayPref(key: string): [boolean, (v: boolean) => void] {
+  const [value, setValue] = useState(true);
+  useEffect(() => {
+    setValue(localStorage.getItem(key) !== "0");
+  }, [key]);
+  const set = (v: boolean) => {
+    localStorage.setItem(key, v ? "1" : "0");
+    setValue(v);
+  };
+  return [value, set];
+}
 
 // ~15 sessions of 5m bars for the session-cumulative RVOL baseline.
 const RVOL_5M_LIMIT = 1000;
@@ -49,6 +65,14 @@ export default function StockDetailPage({
   const { defaultTimeframe } = useDefaultTimeframe();
   const [tfOverride, setTfOverride] = useState<TimeframeId | null>(null);
   const dtf = tfOverride ?? defaultTimeframe;
+
+  // Shared X viewport across the price, MACD, and RSI charts.
+  const [viewport, setViewport] = useState<XViewport>({
+    offset: 0,
+    count: INITIAL_DETAIL_VIEW,
+  });
+  const [overlayRsi, setOverlayRsi] = useOverlayPref("lixionary.overlay.rsi");
+  const [overlayMacd, setOverlayMacd] = useOverlayPref("lixionary.overlay.macd");
 
   const { data: symbols } = useSWR<SymbolOut[]>("/api/symbols", fetcher);
   const meta = symbols?.find((s) => s.symbol === symbol);
@@ -128,49 +152,45 @@ export default function StockDetailPage({
     };
   }, [analysis, m, symbol, meta, dtf, volume, ihsgCorr]);
 
+  const intraday = dtf !== "1d";
+  const totalBars = analysis?.bars.length ?? 0;
+  const onViewportChange = useCallback((v: XViewport) => setViewport(v), []);
+
   const drawPrice = useCallback(
-    (canvas: HTMLCanvasElement) => {
+    (canvas: HTMLCanvasElement, view: ChartView) => {
       if (!analysis || !candles.data) return;
       drawPriceVolume(canvas, analysis.bars, {
-        showVolume: candles.data.has_volume,
+        showVolume: false, // volume lives in its own detached panel below
         cloud: analysis.ichi,
         hlines: [
           { value: analysis.sr.resistance, color: CHART_COLORS.resistance, label: "Resistance" },
           { value: analysis.sr.support, color: CHART_COLORS.support, label: "Support" },
         ],
+        viewport: view.viewport,
+        yState: view.yState,
+        cursor: view.cursor,
+        intraday,
+        overlays: {
+          rsi: overlayRsi ? analysis.rsiArr : undefined,
+          macdLine: overlayMacd ? analysis.macdRes.line : undefined,
+          macdSignal: overlayMacd ? analysis.macdRes.signal : undefined,
+        },
       });
     },
-    [analysis, candles.data],
+    [analysis, candles.data, intraday, overlayRsi, overlayMacd],
   );
 
-  const drawMacd = useCallback(
-    (canvas: HTMLCanvasElement) => {
+  const drawVolume = useCallback(
+    (canvas: HTMLCanvasElement, view: ChartView) => {
       if (!analysis) return;
-      drawIndicatorPanel(canvas, {
-        length: analysis.bars.length,
-        series: [
-          { data: analysis.macdRes.line, color: CHART_COLORS.primary },
-          { data: analysis.macdRes.signal, color: CHART_COLORS.kijun },
-        ],
-        histogram: analysis.macdRes.hist,
+      drawVolumePanel(canvas, analysis.bars, {
+        viewport: view.viewport,
+        yState: view.yState,
+        cursor: view.cursor,
+        intraday,
       });
     },
-    [analysis],
-  );
-
-  const drawRsi = useCallback(
-    (canvas: HTMLCanvasElement) => {
-      if (!analysis) return;
-      drawIndicatorPanel(canvas, {
-        length: analysis.bars.length,
-        series: [{ data: analysis.rsiArr, color: CHART_COLORS.primary }],
-        bands: [
-          { value: 70, color: CHART_COLORS.resistance, label: "70" },
-          { value: 30, color: CHART_COLORS.up, label: "30" },
-        ],
-      });
-    },
-    [analysis],
+    [analysis, intraday],
   );
 
   const demand = volume.session ? classifyRvol(volume.session.rvol) : null;
@@ -229,7 +249,13 @@ export default function StockDetailPage({
             <span className="caption">{meta?.name ?? ""}</span>
           </div>
         </div>
-        <TimeframeSwitcher value={dtf} onChange={setTfOverride} />
+        <TimeframeSwitcher
+          value={dtf}
+          onChange={(next) => {
+            setTfOverride(next);
+            setViewport({ offset: 0, count: INITIAL_DETAIL_VIEW });
+          }}
+        />
       </div>
 
       <div className="card-canvas" style={{ padding: "20px 24px" }}>
@@ -242,7 +268,7 @@ export default function StockDetailPage({
             flexWrap: "wrap",
           }}
         >
-          <span className="caption">Price · volume · Ichimoku cloud · support &amp; resistance</span>
+          <span className="caption">Price · Ichimoku cloud · support &amp; resistance</span>
           <span
             style={{
               display: "flex",
@@ -287,8 +313,28 @@ export default function StockDetailPage({
             />
             Support / Resistance
           </span>
+          {overlayRsi && (
+            <span
+              style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "var(--color-muted)" }}
+            >
+              <span style={{ width: 10, height: 2, background: CHART_COLORS.primary, display: "inline-block" }} />
+              RSI
+            </span>
+          )}
+          {overlayMacd && (
+            <span
+              style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "var(--color-muted)" }}
+            >
+              <span style={{ width: 10, height: 2, background: "#d4a017", display: "inline-block" }} />
+              MACD
+            </span>
+          )}
+          <span style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+            <OverlayChip label="RSI" active={overlayRsi} onToggle={() => setOverlayRsi(!overlayRsi)} />
+            <OverlayChip label="MACD" active={overlayMacd} onToggle={() => setOverlayMacd(!overlayMacd)} />
+          </span>
           {candles.data && !candles.data.has_volume && (
-            <span className="caption" style={{ color: "var(--color-muted-soft)", marginLeft: "auto" }}>
+            <span className="caption" style={{ color: "var(--color-muted-soft)" }}>
               Volume not available intraday for the index
             </span>
           )}
@@ -299,38 +345,43 @@ export default function StockDetailPage({
             onRetry={() => candles.mutate()}
           />
         ) : !analysis ? (
-          <Skeleton height={420} />
+          <Skeleton height={380} />
         ) : (
-          <CanvasChart draw={drawPrice} height={420} />
+          <InteractiveChart
+            draw={drawPrice}
+            height={380}
+            barCount={totalBars}
+            viewport={viewport}
+            onViewportChange={onViewportChange}
+          />
         )}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      {candles.data?.has_volume && (
         <div className="card-canvas" style={{ padding: "18px 22px" }}>
-          <span className="caption">MACD (12, 26, 9)</span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span className="caption">Volume · {dtf}</span>
+            <span className="caption" style={{ color: "var(--color-muted-soft)" }}>
+              X follows the price chart · shift+scroll to zoom, drag to pan vertically
+            </span>
+          </div>
           {!analysis ? (
             <div style={{ marginTop: 6 }}>
-              <Skeleton height={160} />
+              <Skeleton height={150} />
             </div>
           ) : (
             <div style={{ marginTop: 6 }}>
-              <CanvasChart draw={drawMacd} height={160} />
+              <InteractiveChart
+                draw={drawVolume}
+                height={150}
+                barCount={totalBars}
+                viewport={viewport}
+                onViewportChange={onViewportChange}
+              />
             </div>
           )}
         </div>
-        <div className="card-canvas" style={{ padding: "18px 22px" }}>
-          <span className="caption">RSI (14)</span>
-          {!analysis ? (
-            <div style={{ marginTop: 6 }}>
-              <Skeleton height={160} />
-            </div>
-          ) : (
-            <div style={{ marginTop: 6 }}>
-              <CanvasChart draw={drawRsi} height={160} />
-            </div>
-          )}
-        </div>
-      </div>
+      )}
 
       {/* ── Volume analysis ─────────────────────────────────────────────── */}
       <div className="card-canvas" style={{ padding: "18px 22px" }}>
@@ -411,5 +462,36 @@ export default function StockDetailPage({
         </div>
       </div>
     </div>
+  );
+}
+
+function OverlayChip({
+  label,
+  active,
+  onToggle,
+}: {
+  label: string;
+  active: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      title={active ? `Remove ${label} from the price chart` : `Superpose ${label} onto the price chart`}
+      style={{
+        height: 24,
+        padding: "0 10px",
+        borderRadius: 9999,
+        border: "1px solid " + (active ? "var(--color-primary)" : "var(--color-hairline)"),
+        background: active ? "var(--color-primary)" : "var(--color-canvas)",
+        color: active ? "#fff" : "var(--color-muted)",
+        fontSize: 11,
+        fontWeight: 600,
+        cursor: "pointer",
+        transition: "background 120ms ease, color 120ms ease",
+      }}
+    >
+      {label}
+    </button>
   );
 }

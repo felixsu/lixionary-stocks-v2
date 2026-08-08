@@ -6,8 +6,8 @@ import { useCallback, useMemo, useState } from "react";
 import useSWR from "swr";
 
 import { Badge } from "@/components/Badge";
-import { CanvasChart } from "@/components/CanvasChart";
 import { ErrorCard } from "@/components/ErrorCard";
+import { type ChartView, InteractiveChart } from "@/components/InteractiveChart";
 import { Skeleton } from "@/components/Skeleton";
 import { TimeframeSwitcher } from "@/components/TimeframeSwitcher";
 import {
@@ -19,6 +19,7 @@ import {
   fetcher,
 } from "@/lib/api";
 import { drawPriceVolume } from "@/lib/chart-draw";
+import { type XViewport, clampViewport } from "@/lib/viewport";
 import { useDefaultTimeframe, useFavorites } from "@/lib/favorites";
 import { correlation, returns } from "@/lib/indicators";
 import {
@@ -33,8 +34,10 @@ import { type TimeframeId, timeframeLabel } from "@/lib/timeframes";
 
 const REFRESH_MS = 60_000;
 
-// Bars shown per timeframe — matches the design prototype's visual density.
-const CHART_LIMITS: Record<TimeframeId, number> = { "5m": 66, "1h": 42, "2h": 32, "1d": 130 };
+// Fetched depth per timeframe (roomy, for zooming out) vs the initial visible
+// window (the design prototype's density).
+const CHART_LIMITS: Record<TimeframeId, number> = { "5m": 132, "1h": 84, "2h": 64, "1d": 260 };
+const INITIAL_VIEW: Record<TimeframeId, number> = { "5m": 66, "1h": 42, "2h": 32, "1d": 130 };
 
 function useCandles(symbol: string | null, timeframe: TimeframeId) {
   return useSWR<CandlesOut>(
@@ -178,6 +181,9 @@ export default function DashboardPage() {
   const [expandedCode, setExpandedCode] = useState<string | null>(null);
   const tf = tfOverride ?? defaultTimeframe;
 
+  // Shared X viewport across the IHSG and comparison charts.
+  const [viewport, setViewport] = useState<XViewport>({ offset: 0, count: INITIAL_VIEW["1d"] });
+
   const { data: symbols } = useSWR<SymbolOut[]>("/api/symbols", fetcher, {
     refreshInterval: REFRESH_MS,
   });
@@ -205,23 +211,43 @@ export default function DashboardPage() {
     return { bars: stock, indexCloses, corr };
   }, [expanded.data, ihsg.data]);
 
+  const intraday = tf !== "1d";
+
   const drawIhsg = useCallback(
-    (canvas: HTMLCanvasElement) => {
+    (canvas: HTMLCanvasElement, view: ChartView) => {
       if (!ihsg.data) return;
-      drawPriceVolume(canvas, ihsg.data.bars, { showVolume: ihsg.data.has_volume });
+      drawPriceVolume(canvas, ihsg.data.bars, {
+        showVolume: ihsg.data.has_volume,
+        viewport: view.viewport,
+        yState: view.yState,
+        cursor: view.cursor,
+        volZoom: view.volZoom,
+        intraday,
+      });
     },
-    [ihsg.data],
+    [ihsg.data, intraday],
   );
 
   const drawComparison = useCallback(
-    (canvas: HTMLCanvasElement) => {
+    (canvas: HTMLCanvasElement, view: ChartView) => {
       if (!comparison) return;
       drawPriceVolume(canvas, comparison.bars, {
         showVolume: false,
         compareSeries: comparison.indexCloses,
+        viewport: view.viewport,
+        yState: view.yState,
+        cursor: view.cursor,
+        intraday,
       });
     },
-    [comparison],
+    [comparison, intraday],
+  );
+
+  // Shared viewport clamps against the longest series on screen.
+  const totalBars = Math.max(ihsg.data?.bars.length ?? 0, comparison?.bars.length ?? 0);
+  const onViewportChange = useCallback(
+    (v: XViewport) => setViewport(v),
+    [],
   );
 
   return (
@@ -257,7 +283,10 @@ export default function DashboardPage() {
         </div>
         <TimeframeSwitcher
           value={tf}
-          onChange={(next) => setTfOverride(next)}
+          onChange={(next) => {
+            setTfOverride(next);
+            setViewport({ offset: 0, count: INITIAL_VIEW[next] });
+          }}
         />
       </div>
 
@@ -282,7 +311,14 @@ export default function DashboardPage() {
         ) : !ihsg.data ? (
           <Skeleton height={340} />
         ) : (
-          <CanvasChart draw={drawIhsg} height={340} />
+          <InteractiveChart
+            draw={drawIhsg}
+            height={340}
+            barCount={totalBars}
+            viewport={clampViewport(viewport, ihsg.data.bars.length)}
+            onViewportChange={onViewportChange}
+            hasVolume={ihsg.data.has_volume}
+          />
         )}
       </div>
 
@@ -314,7 +350,17 @@ export default function DashboardPage() {
               Close
             </button>
           </div>
-          {!comparison ? <Skeleton height={220} /> : <CanvasChart draw={drawComparison} height={220} />}
+          {!comparison ? (
+            <Skeleton height={220} />
+          ) : (
+            <InteractiveChart
+              draw={drawComparison}
+              height={220}
+              barCount={totalBars}
+              viewport={clampViewport(viewport, comparison.bars.length)}
+              onViewportChange={onViewportChange}
+            />
+          )}
         </div>
       )}
 
