@@ -1,0 +1,70 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: lixionary-stock-v2-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-lixionary_stock_v2}
+    # Bound to loopback only. Remote access is via Tailscale, never the LAN.
+    ports:
+      - "127.0.0.1:8852:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --username=${MONGO_USER}
+        - --password=${MONGO_PASSWORD}
+        - --authenticationDatabase=admin
+        - --eval=db.adminCommand('ping').ok
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  api:
+    build:
+      context: ./backend
+    container_name: lixionary-stock-v2-api
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Jakarta
+      MONGO_URI: mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongo:27017/?authSource=admin
+      MONGO_DB: ${MONGO_DB:-lixionary_stock_v2}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "127.0.0.1:8850:8850"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8850/api/system/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  worker:
+    build:
+      context: ./backend
+    container_name: lixionary-stock-v2-worker
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Jakarta
+      MONGO_URI: mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongo:27017/?authSource=admin
+      MONGO_DB: ${MONGO_DB:-lixionary_stock_v2}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    # The scheduler lives here, not in the API lifespan. An API restart must not
+    # drop in-flight ingestion, and the API must stay independently restartable.
+    command: ["python", "-m", "app.worker"]
+
+volumes:
+  mongo_data:

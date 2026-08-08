@@ -1,0 +1,15 @@
+# One symbol per line. Base IDX ticker, no .JK suffix.
+# Seed with:  python scripts/seed_symbols.py --file watchlist.example.txt
+
+^JKSE      # IHSG / IDX Composite
+
+BBCA
+BBRI
+BMRI
+BBNI
+TLKM
+ASII
+UNVR
+ICBP
+INDF
+KLBF

@@ -1,0 +1,57 @@
+[project]
+name = "lixionary-stock-backend"
+version = "0.2.0"
+description = "IDX OHLCV ingestion and analytics backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "motor>=3.6",
+    "pymongo>=4.9",
+    "yfinance>=0.2.51",
+    "curl-cffi>=0.7",
+    "pandas>=2.2",
+    "numpy>=2.1",
+    "apscheduler>=3.10",
+    "tenacity>=9.0",
+    "structlog>=24.4",
+    "cachetools>=5.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom: Query/Path/Body must be called in defaults.
+extend-immutable-calls = ["fastapi.Query", "fastapi.Path", "fastapi.Body", "fastapi.Depends"]
+
+[tool.ruff.lint.per-file-ignores]
+# `l` is the wire-format name for the low price in the OHLCV contract.
+"app/models/schemas.py" = ["E741"]
+"app/sources/yahoo.py" = ["E741"]
