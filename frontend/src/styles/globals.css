@@ -22,3 +22,9 @@
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+/* Spinner for in-flight actions */
+@keyframes lx-rotate {
+  to { transform: rotate(360deg); }
+}
+.lx-spin { animation: lx-rotate 1s linear infinite; }

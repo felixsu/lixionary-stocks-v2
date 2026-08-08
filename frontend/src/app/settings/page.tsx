@@ -1,7 +1,7 @@
 "use client";
 
-import { Plus, X } from "lucide-react";
-import { useState } from "react";
+import { Eye, EyeOff, Plus, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 
 import { ErrorCard } from "@/components/ErrorCard";
@@ -9,6 +9,167 @@ import { Skeleton } from "@/components/Skeleton";
 import { TimeframeSwitcher } from "@/components/TimeframeSwitcher";
 import { ApiError, type SymbolOut, api, fetcher } from "@/lib/api";
 import { MAX_FAVORITES, useDefaultTimeframe, useFavorites } from "@/lib/favorites";
+import { PROVIDERS, chat, fetchModels, providerById, useLlmSettings } from "@/lib/llm";
+
+function LlmSettingsCard() {
+  const { settings, update, configured } = useLlmSettings();
+  const [models, setModels] = useState<string[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [showKey, setShowKey] = useState(false);
+  const [testState, setTestState] = useState<"idle" | "testing" | "ok" | "failed">("idle");
+  const [testMessage, setTestMessage] = useState<string | null>(null);
+
+  const provider = providerById(settings.provider);
+
+  // Refresh the model list whenever provider or key changes. Fetched live from
+  // the provider's /models endpoint; falls back to a hardcoded list on failure.
+  useEffect(() => {
+    let cancelled = false;
+    if (!provider) {
+      setModels([]);
+      return;
+    }
+    setModelsLoading(true);
+    fetchModels({ ...settings, provider: provider.id }).then((list) => {
+      if (cancelled) return;
+      setModels(list);
+      setModelsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.provider, settings.apiKey]);
+
+  async function testConnection() {
+    setTestState("testing");
+    setTestMessage(null);
+    try {
+      await chat(settings, [{ role: "user", content: "Reply with the single word: ok" }]);
+      setTestState("ok");
+      setTestMessage("Connection works.");
+    } catch (err) {
+      setTestState("failed");
+      setTestMessage(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  return (
+    <div className="card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div>
+        <span className="field-label" style={{ margin: 0 }}>
+          AI analysis (LLM)
+        </span>
+        <p className="body-sm" style={{ margin: "4px 0 0 0", color: "var(--color-muted)" }}>
+          Powers the AI trend read on the stock analysis screen. The API key is stored in this
+          browser only and is sent to the provider through this app per request.
+        </p>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div>
+          <label className="field-label">Provider</label>
+          <select
+            className="select"
+            value={settings.provider}
+            onChange={(e) => {
+              const next = providerById(e.target.value);
+              update({ provider: (next?.id ?? "") as typeof settings.provider, model: "" });
+              setTestState("idle");
+              setTestMessage(null);
+            }}
+          >
+            <option value="" disabled>
+              Choose a provider…
+            </option>
+            {PROVIDERS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="field-label">Model</label>
+          <select
+            className="select"
+            value={settings.model}
+            disabled={!provider || modelsLoading}
+            onChange={(e) => {
+              update({ model: e.target.value });
+              setTestState("idle");
+              setTestMessage(null);
+            }}
+          >
+            <option value="" disabled>
+              {modelsLoading ? "Loading models…" : "Choose a model…"}
+            </option>
+            {/* Keep a previously-saved model selectable even if the live list omits it. */}
+            {settings.model && !models.includes(settings.model) && (
+              <option value={settings.model}>{settings.model}</option>
+            )}
+            {models.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label className="field-label">API key</label>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            className="input"
+            style={{ flex: 1 }}
+            type={showKey ? "text" : "password"}
+            placeholder={provider?.keyPlaceholder ?? "API key"}
+            value={settings.apiKey}
+            onChange={(e) => {
+              update({ apiKey: e.target.value });
+              setTestState("idle");
+              setTestMessage(null);
+            }}
+          />
+          <button
+            className="btn-icon"
+            style={{ width: 40, height: 40 }}
+            title={showKey ? "Hide key" : "Show key"}
+            onClick={() => setShowKey((v) => !v)}
+          >
+            {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <button
+          className="btn btn-secondary btn-sm"
+          disabled={!configured || testState === "testing"}
+          onClick={testConnection}
+        >
+          {testState === "testing" ? "Testing…" : "Test connection"}
+        </button>
+        {testMessage && (
+          <span
+            className="caption"
+            style={{
+              color: testState === "ok" ? "var(--color-success)" : "var(--color-error)",
+            }}
+          >
+            {testMessage}
+          </span>
+        )}
+        {!configured && (
+          <span className="caption" style={{ color: "var(--color-muted-soft)" }}>
+            AI analysis stays disabled until provider, model, and key are all set.
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const { favorites, add, remove } = useFavorites();
@@ -264,6 +425,9 @@ export default function SettingsPage() {
           </span>
         )}
       </div>
+
+      {/* ── LLM configuration ──────────────────────────────────────────── */}
+      <LlmSettingsCard />
 
       {/* ── Default timeframe ──────────────────────────────────────────── */}
       <div className="card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Sparkles } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { use, useCallback, useMemo, useState } from "react";
 import useSWR from "swr";
@@ -8,19 +8,33 @@ import useSWR from "swr";
 import { Badge } from "@/components/Badge";
 import { CanvasChart } from "@/components/CanvasChart";
 import { ErrorCard } from "@/components/ErrorCard";
+import { LlmAnalysisCard } from "@/components/LlmAnalysisCard";
 import { Skeleton } from "@/components/Skeleton";
 import { TimeframeSwitcher } from "@/components/TimeframeSwitcher";
-import { type CandlesOut, type SymbolOut, candlesKey, fetcher } from "@/lib/api";
+import { type CandlesOut, type SymbolOut, IHSG_SYMBOL, candlesKey, fetcher } from "@/lib/api";
 import { CHART_COLORS, drawIndicatorPanel, drawPriceVolume } from "@/lib/chart-draw";
 import { useDefaultTimeframe } from "@/lib/favorites";
-import { aiSignal, ichimoku, macd, rsi, supportResistance } from "@/lib/indicators";
+import {
+  aiSignal,
+  correlation,
+  ichimoku,
+  macd,
+  returns,
+  rsi,
+  supportResistance,
+} from "@/lib/indicators";
+import type { AnalysisInput } from "@/lib/llm";
 import { badgeClassForPct, fmtPct, fmtPrice, metricsFromDaily } from "@/lib/metrics";
 import { type TimeframeId } from "@/lib/timeframes";
+import { classifyRvol, dailyRvol, fmtVolume, sessionRvol, volumeSpike } from "@/lib/volume";
 
 const REFRESH_MS = 60_000;
 
 // Enough history that Ichimoku's 52-bar lookback has warmup beyond the window.
 const DETAIL_LIMIT = 180;
+
+// ~15 sessions of 5m bars for the session-cumulative RVOL baseline.
+const RVOL_5M_LIMIT = 1000;
 
 export default function StockDetailPage({
   params,
@@ -29,6 +43,7 @@ export default function StockDetailPage({
 }) {
   const { symbol: rawSymbol } = use(params);
   const symbol = decodeURIComponent(rawSymbol).toUpperCase();
+  const isIndex = symbol.startsWith("^");
 
   // Independent timeframe state — deliberately not shared with the dashboard.
   const { defaultTimeframe } = useDefaultTimeframe();
@@ -42,6 +57,16 @@ export default function StockDetailPage({
     refreshInterval: REFRESH_MS,
   });
   const daily = useSWR<CandlesOut>(candlesKey(symbol, "1d", 40), fetcher, {
+    refreshInterval: REFRESH_MS,
+  });
+  // 5m history for session RVOL (skipped for the index — no intraday volume).
+  const fiveMin = useSWR<CandlesOut>(
+    isIndex ? null : candlesKey(symbol, "5m", RVOL_5M_LIMIT),
+    fetcher,
+    { refreshInterval: REFRESH_MS },
+  );
+  // IHSG daily closes for the correlation figure fed to the LLM.
+  const ihsgDaily = useSWR<CandlesOut>(candlesKey(IHSG_SYMBOL, "1d", 40), fetcher, {
     refreshInterval: REFRESH_MS,
   });
 
@@ -59,11 +84,55 @@ export default function StockDetailPage({
 
   const m = daily.data ? metricsFromDaily(daily.data.bars) : null;
 
+  const volume = useMemo(() => {
+    // Session-cumulative RVOL always derives from 5m (finest data); the spike
+    // z-score reads the displayed timeframe's own bars.
+    const session = dtf === "1d"
+      ? daily.data
+        ? dailyRvol(daily.data.bars)
+        : null
+      : fiveMin.data
+        ? sessionRvol(fiveMin.data.bars)
+        : null;
+    const spike = analysis ? volumeSpike(analysis.bars) : null;
+    return { session, spike };
+  }, [dtf, daily.data, fiveMin.data, analysis]);
+
+  const ihsgCorr = useMemo(() => {
+    if (isIndex) return null;
+    const a = daily.data?.bars;
+    const b = ihsgDaily.data?.bars;
+    if (!a?.length || !b?.length) return null;
+    return correlation(returns(a.map((x) => x.c)), returns(b.map((x) => x.c)));
+  }, [isIndex, daily.data, ihsgDaily.data]);
+
+  const llmInput: AnalysisInput | null = useMemo(() => {
+    if (!analysis || !m) return null;
+    return {
+      symbol,
+      name: meta?.name ?? null,
+      timeframe: dtf,
+      price: m.price,
+      changePct: m.pct,
+      dayLow: m.dayLow,
+      dayHigh: m.dayHigh,
+      bars: analysis.bars,
+      rsi: analysis.rsiArr[analysis.rsiArr.length - 1],
+      macd: analysis.macdRes,
+      ichimoku: analysis.ichi,
+      sr: analysis.sr,
+      heuristic: analysis.sig,
+      sessionVolume: volume.session,
+      volumeSpike: volume.spike,
+      ihsgCorrelation: ihsgCorr,
+    };
+  }, [analysis, m, symbol, meta, dtf, volume, ihsgCorr]);
+
   const drawPrice = useCallback(
     (canvas: HTMLCanvasElement) => {
-      if (!analysis) return;
+      if (!analysis || !candles.data) return;
       drawPriceVolume(canvas, analysis.bars, {
-        showVolume: false,
+        showVolume: candles.data.has_volume,
         cloud: analysis.ichi,
         hlines: [
           { value: analysis.sr.resistance, color: CHART_COLORS.resistance, label: "Resistance" },
@@ -71,7 +140,7 @@ export default function StockDetailPage({
         ],
       });
     },
-    [analysis],
+    [analysis, candles.data],
   );
 
   const drawMacd = useCallback(
@@ -104,12 +173,7 @@ export default function StockDetailPage({
     [analysis],
   );
 
-  const sigClass =
-    analysis?.sig.stance === "bullish"
-      ? "badge-success"
-      : analysis?.sig.stance === "bearish"
-        ? "badge-error"
-        : "badge-default";
+  const demand = volume.session ? classifyRvol(volume.session.rvol) : null;
 
   return (
     <div
@@ -178,7 +242,7 @@ export default function StockDetailPage({
             flexWrap: "wrap",
           }}
         >
-          <span className="caption">Price · Ichimoku cloud · support &amp; resistance</span>
+          <span className="caption">Price · volume · Ichimoku cloud · support &amp; resistance</span>
           <span
             style={{
               display: "flex",
@@ -223,6 +287,11 @@ export default function StockDetailPage({
             />
             Support / Resistance
           </span>
+          {candles.data && !candles.data.has_volume && (
+            <span className="caption" style={{ color: "var(--color-muted-soft)", marginLeft: "auto" }}>
+              Volume not available intraday for the index
+            </span>
+          )}
         </div>
         {candles.error ? (
           <ErrorCard
@@ -230,9 +299,9 @@ export default function StockDetailPage({
             onRetry={() => candles.mutate()}
           />
         ) : !analysis ? (
-          <Skeleton height={380} />
+          <Skeleton height={420} />
         ) : (
-          <CanvasChart draw={drawPrice} height={380} />
+          <CanvasChart draw={drawPrice} height={420} />
         )}
       </div>
 
@@ -263,41 +332,62 @@ export default function StockDetailPage({
         </div>
       </div>
 
-      <div className="card" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* ── Volume analysis ─────────────────────────────────────────────── */}
+      <div className="card-canvas" style={{ padding: "18px 22px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Sparkles size={18} style={{ color: "var(--color-primary)" }} />
-            <h5 style={{ margin: 0 }}>AI trend read</h5>
-          </div>
-          {analysis && (
-            <Badge className={sigClass}>
-              {analysis.sig.stance.charAt(0).toUpperCase() + analysis.sig.stance.slice(1)}
-            </Badge>
-          )}
+          <span className="caption">Volume analysis</span>
+          {demand && <Badge className={demand.badgeClass}>{demand.label}</Badge>}
         </div>
-        {!analysis ? (
-          <Skeleton height={72} />
+        {isIndex && dtf !== "1d" ? (
+          <p className="body-sm" style={{ margin: "10px 0 0 0", color: "var(--color-muted)" }}>
+            The index has no intraday volume data — switch to Daily for volume analysis.
+          </p>
+        ) : !volume.session ? (
+          <div style={{ marginTop: 10 }}>
+            <Skeleton height={80} />
+          </div>
         ) : (
-          <ul
-            style={{
-              margin: 0,
-              paddingLeft: 20,
-              display: "flex",
-              flexDirection: "column",
-              gap: 6,
-            }}
-          >
-            {analysis.sig.reasons.map((reason) => (
-              <li key={reason} className="body-sm">
-                {reason}
-              </li>
-            ))}
-          </ul>
+          <>
+            <div style={{ display: "flex", gap: 24, marginTop: 10 }}>
+              <div className="well" style={{ flex: 1 }}>
+                <div className="caption" style={{ marginBottom: 4 }}>
+                  {dtf === "1d" ? "Today vs 20-session average" : "Session so far vs 10-session average"}
+                </div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 18, color: "var(--color-ink)" }}>
+                    {volume.session.rvol.toFixed(2)}×
+                  </span>
+                  <span className="caption" style={{ color: "var(--color-muted)" }}>
+                    {fmtVolume(volume.session.sessionVolume)} vs {fmtVolume(volume.session.baselineVolume)}
+                  </span>
+                </div>
+              </div>
+              <div className="well" style={{ flex: 1 }}>
+                <div className="caption" style={{ marginBottom: 4 }}>
+                  Last bar vs its 20-bar average ({dtf})
+                </div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 18, color: "var(--color-ink)" }}>
+                    {volume.spike ? `${volume.spike.zScore >= 0 ? "+" : ""}${volume.spike.zScore.toFixed(1)}σ` : "—"}
+                  </span>
+                  {volume.spike && Math.abs(volume.spike.zScore) >= 2 && (
+                    <span className="caption" style={{ color: "var(--color-warning)" }}>
+                      unusual single-bar volume
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <p className="body-sm" style={{ margin: "10px 0 0 0", color: "var(--color-muted)" }}>
+              {dtf === "1d"
+                ? `Volume on ${volume.session.sessionDate} was ${volume.session.rvol.toFixed(2)}× the average of the prior ${volume.session.baselineSessions} sessions.`
+                : `Cumulative volume on ${volume.session.sessionDate} is ${volume.session.rvol.toFixed(2)}× the average of the prior ${volume.session.baselineSessions} sessions at the same time of day — ${demand?.label.toLowerCase()}.`}
+            </p>
+          </>
         )}
-        <span className="caption" style={{ color: "var(--color-muted-soft)" }}>
-          Generated from indicator rules — not financial advice.
-        </span>
       </div>
+
+      <LlmAnalysisCard symbol={symbol} timeframe={dtf} input={llmInput} />
 
       <div className="card-canvas" style={{ padding: "18px 22px" }}>
         <span className="caption">Support &amp; resistance</span>
