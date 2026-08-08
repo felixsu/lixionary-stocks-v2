@@ -87,6 +87,19 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
 
     await db.holidays.create_index("date", unique=True)
 
+    await db.positions.create_index("symbol", unique=True)
+
+    await db.news_items.create_index("url", unique=True)
+    await db.news_items.create_index([("published_at", -1)])
+    await db.news_items.create_index("analysis.symbols.symbol")
+    await _ensure_ttl_index(
+        db,
+        "news_items",
+        "fetched_at",
+        settings.news_retention_days * 86400,
+        "ttl_fetched_at",
+    )
+
 
 async def _ensure_ttl_index(
     db: AsyncIOMotorDatabase,
@@ -119,7 +132,7 @@ async def _ensure_ttl_index(
 
 
 async def ensure_collections(db: AsyncIOMotorDatabase) -> None:
-    for name in ("symbols", "candles", "ingest_runs", "holidays"):
+    for name in ("symbols", "candles", "ingest_runs", "holidays", "news_items", "positions"):
         try:
             await db.create_collection(name)
         except CollectionInvalid:

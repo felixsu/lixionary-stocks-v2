@@ -3,17 +3,29 @@
 // App frame from the design: fixed 240px sidebar + 64px topbar + scrollable
 // content column.
 
-import { LayoutDashboard, LineChart, Settings } from "lucide-react";
+import { LayoutDashboard, LineChart, Newspaper, Settings, Wallet } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard, match: (p: string) => p === "/" },
   {
+    href: "/portfolio",
+    label: "Portfolio",
+    icon: Wallet,
+    match: (p: string) => p.startsWith("/portfolio"),
+  },
+  {
     href: "/stocks",
     label: "Stock analysis",
     icon: LineChart,
     match: (p: string) => p.startsWith("/stocks"),
+  },
+  {
+    href: "/news",
+    label: "News",
+    icon: Newspaper,
+    match: (p: string) => p.startsWith("/news"),
   },
   {
     href: "/settings",
@@ -24,7 +36,9 @@ const NAV = [
 ];
 
 function pageTitle(pathname: string): string {
+  if (pathname.startsWith("/portfolio")) return "Portfolio";
   if (pathname.startsWith("/stocks")) return "Stock analysis";
+  if (pathname.startsWith("/news")) return "News";
   if (pathname.startsWith("/settings")) return "Settings";
   return "Dashboard";
 }

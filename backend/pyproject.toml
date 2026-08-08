@@ -18,6 +18,8 @@ dependencies = [
     "tenacity>=9.0",
     "structlog>=24.4",
     "cachetools>=5.5",
+    "feedparser>=6.0",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -47,6 +49,7 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI's dependency-injection idiom: Query/Path/Body must be called in defaults.
 extend-immutable-calls = ["fastapi.Query", "fastapi.Path", "fastapi.Body", "fastapi.Depends"]
@@ -55,3 +58,6 @@ extend-immutable-calls = ["fastapi.Query", "fastapi.Path", "fastapi.Body", "fast
 # `l` is the wire-format name for the low price in the OHLCV contract.
 "app/models/schemas.py" = ["E741"]
 "app/sources/yahoo.py" = ["E741"]
+# Natural-language LLM prompt blocks and test fixture payloads read better unwrapped.
+"app/services/news.py" = ["E501"]
+"tests/test_news.py" = ["E501"]

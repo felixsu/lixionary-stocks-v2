@@ -9,6 +9,8 @@ import { Badge } from "@/components/Badge";
 import { ErrorCard } from "@/components/ErrorCard";
 import { type ChartView, InteractiveChart } from "@/components/InteractiveChart";
 import { LlmAnalysisCard } from "@/components/LlmAnalysisCard";
+import { RelatedNewsCard } from "@/components/RelatedNewsCard";
+import { ScorecardCard } from "@/components/ScorecardCard";
 import { Skeleton } from "@/components/Skeleton";
 import { TimeframeSwitcher } from "@/components/TimeframeSwitcher";
 import { type CandlesOut, type SymbolOut, IHSG_SYMBOL, candlesKey, fetcher } from "@/lib/api";
@@ -25,6 +27,7 @@ import {
 } from "@/lib/indicators";
 import type { AnalysisInput } from "@/lib/llm";
 import { badgeClassForPct, fmtPct, fmtPrice, metricsFromDaily } from "@/lib/metrics";
+import { computeScorecard } from "@/lib/signals";
 import { type TimeframeId } from "@/lib/timeframes";
 import { type XViewport } from "@/lib/viewport";
 import { classifyRvol, dailyRvol, fmtVolume, sessionRvol, volumeSpike } from "@/lib/volume";
@@ -103,7 +106,8 @@ export default function StockDetailPage({
     const macdRes = macd(closes);
     const rsiArr = rsi(closes);
     const sig = aiSignal(bars, ichi, macdRes, rsiArr, sr);
-    return { bars, ichi, sr, macdRes, rsiArr, sig };
+    const scorecard = computeScorecard(bars, { ichimoku: ichi, macd: macdRes, rsi: rsiArr, sr });
+    return { bars, ichi, sr, macdRes, rsiArr, sig, scorecard };
   }, [candles.data]);
 
   const m = daily.data ? metricsFromDaily(daily.data.bars) : null;
@@ -146,6 +150,7 @@ export default function StockDetailPage({
       ichimoku: analysis.ichi,
       sr: analysis.sr,
       heuristic: analysis.sig,
+      scorecard: analysis.scorecard,
       sessionVolume: volume.session,
       volumeSpike: volume.spike,
       ihsgCorrelation: ihsgCorr,
@@ -437,6 +442,10 @@ export default function StockDetailPage({
           </>
         )}
       </div>
+
+      {analysis && <ScorecardCard scorecard={analysis.scorecard} timeframe={dtf} />}
+
+      <RelatedNewsCard symbol={symbol} />
 
       <LlmAnalysisCard symbol={symbol} timeframe={dtf} input={llmInput} />
 

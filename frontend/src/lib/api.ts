@@ -99,3 +99,57 @@ export const api = {
       { method: "DELETE" },
     ),
 };
+
+// ── News ────────────────────────────────────────────────────────────────────
+
+export interface NewsSymbolTag {
+  symbol: string;
+  direction: "positive" | "negative";
+  reason: string;
+}
+
+export interface NewsAnalysis {
+  relevant: boolean;
+  sentiment: "bullish" | "bearish" | "neutral";
+  impact: "high" | "medium" | "low";
+  note: string;
+  symbols: NewsSymbolTag[];
+  model: string;
+  analyzed_at: string;
+}
+
+export interface NewsItem {
+  url: string;
+  title: string;
+  source: string;
+  feed_category: string;
+  summary: string;
+  published_at: string;
+  analysis: NewsAnalysis | null;
+}
+
+export interface NewsList {
+  analysis_enabled: boolean;
+  count: number;
+  items: NewsItem[];
+}
+
+export interface NewsSummary {
+  analysis_enabled: boolean;
+  window_hours: number;
+  bullish: number;
+  bearish: number;
+  neutral: number;
+  lean: "bullish" | "bearish" | "neutral";
+  top_symbols: { symbol: string; mentions: number; positive: number }[];
+  total_items: number;
+  pending_analysis: number;
+}
+
+export function newsKey(opts: { symbol?: string; sentiment?: string; limit?: number } = {}): string {
+  const params = new URLSearchParams();
+  if (opts.symbol) params.set("symbol", opts.symbol);
+  if (opts.sentiment) params.set("sentiment", opts.sentiment);
+  params.set("limit", String(opts.limit ?? 50));
+  return `/api/news?${params.toString()}`;
+}

@@ -158,6 +158,14 @@ async def nightly_daily(db: AsyncIOMotorDatabase | None = None) -> dict[str, Any
     return summary
 
 
+async def run_news_cycle(db: AsyncIOMotorDatabase | None = None) -> dict[str, Any]:
+    """News fetch + LLM analysis. Runs 24/7 — news breaks outside market hours."""
+    from app.services.news import news_cycle
+
+    db = db if db is not None else get_db()
+    return await news_cycle(db)
+
+
 async def recalc_coverage(db: AsyncIOMotorDatabase | None = None) -> dict[str, Any]:
     db = db if db is not None else get_db()
     count = await refresh_all_coverage(db)
