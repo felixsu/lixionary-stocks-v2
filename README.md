@@ -118,6 +118,29 @@ tailscale serve --bg 8850
 
 That gives TLS and a stable MagicDNS name with no firewall rules to maintain.
 
+### Production Nginx Reverse Proxy Deployment
+
+To deploy this service publicly (e.g., at `stockv2.lixionary.com`), configure an Nginx reverse proxy pointing to the frontend port (`8850` on the host).
+
+1. Copy the Nginx configuration template from `nginx/stockv2.lixionary.com.conf.example` to `/etc/nginx/sites-available/stockv2.lixionary.com.conf`.
+2. Enable the configuration by creating a symlink:
+   ```bash
+   sudo ln -s /etc/nginx/sites-available/stockv2.lixionary.com.conf /etc/nginx/sites-enabled/
+   ```
+3. Test syntax and reload Nginx:
+   ```bash
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+4. Secure the site with HTTPS using Certbot:
+   ```bash
+   sudo certbot --nginx -d stockv2.lixionary.com
+   ```
+
+> [!IMPORTANT]
+> To ensure Google SSO OAuth redirects do not resolve to internal Docker container IDs/ports, make sure:
+> - Nginx is forwarding `X-Forwarded-Host` and `X-Forwarded-Port`.
+> - The environment variables `AUTH_TRUST_HOST=true`, `AUTH_URL`, and `AUTH_REDIRECT_PROXY_URL` are properly set in the `docker-compose.yml` frontend service environment.
+
 ## Scheduled jobs
 
 | Job | Cadence | Work |

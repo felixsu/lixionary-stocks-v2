@@ -12,7 +12,11 @@ export default auth((req) => {
     return NextResponse.json({ detail: "Not authenticated" }, { status: 401 });
   }
 
-  const login = new URL("/login", req.nextUrl);
+  const forwardedHost = req.headers.get("x-forwarded-host");
+  const forwardedProto = req.headers.get("x-forwarded-proto") || "https";
+  const baseUrl = forwardedHost ? `${forwardedProto}://${forwardedHost}` : req.nextUrl.origin;
+
+  const login = new URL("/login", baseUrl);
   if (pathname !== "/") login.searchParams.set("from", pathname);
   return NextResponse.redirect(login);
 });

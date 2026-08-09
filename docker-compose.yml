@@ -44,7 +44,7 @@ services:
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
     ports:
-      - "127.0.0.1:8850:8850"
+      - "127.0.0.1:8851:8850"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8850/api/system/health"]
       interval: 30s
@@ -88,8 +88,11 @@ services:
       AUTH_GOOGLE_ID: ${AUTH_GOOGLE_ID}
       AUTH_GOOGLE_SECRET: ${AUTH_GOOGLE_SECRET}
       AUTH_ALLOWED_EMAILS: ${AUTH_ALLOWED_EMAILS:-}
+      AUTH_TRUST_HOST: "true"
+      AUTH_URL: https://stockv2.lixionary.com/api/auth
+      AUTH_REDIRECT_PROXY_URL: https://stockv2.lixionary.com/api/auth
     ports:
-      - "127.0.0.1:8853:3000"
+      - "127.0.0.1:8850:3000"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
