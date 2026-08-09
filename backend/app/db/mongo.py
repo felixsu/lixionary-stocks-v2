@@ -132,7 +132,15 @@ async def _ensure_ttl_index(
 
 
 async def ensure_collections(db: AsyncIOMotorDatabase) -> None:
-    for name in ("symbols", "candles", "ingest_runs", "holidays", "news_items", "positions"):
+    for name in (
+        "symbols",
+        "candles",
+        "ingest_runs",
+        "holidays",
+        "news_items",
+        "positions",
+        "settings",
+    ):
         try:
             await db.create_collection(name)
         except CollectionInvalid:
