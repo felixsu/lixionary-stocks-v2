@@ -84,6 +84,10 @@ services:
       - api
     environment:
       TZ: Asia/Jakarta
+      AUTH_SECRET: ${AUTH_SECRET}
+      AUTH_GOOGLE_ID: ${AUTH_GOOGLE_ID}
+      AUTH_GOOGLE_SECRET: ${AUTH_GOOGLE_SECRET}
+      AUTH_ALLOWED_EMAILS: ${AUTH_ALLOWED_EMAILS:-}
     ports:
       - "127.0.0.1:8853:3000"
     healthcheck:
