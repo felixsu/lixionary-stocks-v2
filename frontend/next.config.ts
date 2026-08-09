@@ -10,8 +10,10 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       {
-        source: "/api/:path*",
-        destination: `${API_INTERNAL_URL}/api/:path*`,
+        // Everything under /api except /api/auth/* (Auth.js catch-all route —
+        // dynamic app routes match AFTER rewrites, so it must be excluded here).
+        source: "/api/:path((?!auth).*)",
+        destination: `${API_INTERNAL_URL}/api/:path`,
       },
     ];
   },

@@ -3,9 +3,25 @@
 // App frame from the design: fixed 240px sidebar + 64px topbar + scrollable
 // content column.
 
-import { LayoutDashboard, LineChart, Newspaper, Settings, Wallet } from "lucide-react";
+import { LayoutDashboard, LineChart, LogOut, Newspaper, Settings, Wallet } from "lucide-react";
+import { signOut } from "next-auth/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import useSWR from "swr";
+
+interface SessionUser {
+  name?: string | null;
+  email?: string | null;
+  image?: string | null;
+}
+
+// Display-only; the middleware is the actual gate.
+function useSessionUser(): SessionUser | null {
+  const { data } = useSWR<{ user?: SessionUser } | null>("/api/auth/session", (url: string) =>
+    fetch(url).then((r) => (r.ok ? r.json() : null)),
+  );
+  return data?.user ?? null;
+}
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard, match: (p: string) => p === "/" },
@@ -45,6 +61,10 @@ function pageTitle(pathname: string): string {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const user = useSessionUser();
+
+  // The login page draws its own full-viewport layout.
+  if (pathname === "/login") return <>{children}</>;
 
   return (
     <div
@@ -150,12 +170,44 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span className="caption" style={{ color: "var(--color-muted)" }}>
               Delayed ~10 min
             </span>
-            <div
-              className="avatar"
-              style={{ width: 32, height: 32, fontSize: 13 }}
+            {user?.image ? (
+              // eslint-disable-next-line @next/next/no-img-element -- external avatar host, no need for next/image
+              <img
+                src={user.image}
+                alt={user.name ?? "Account"}
+                title={user.email ?? undefined}
+                referrerPolicy="no-referrer"
+                style={{ width: 32, height: 32, borderRadius: 9999 }}
+              />
+            ) : (
+              <div
+                className="avatar"
+                title={user?.email ?? undefined}
+                style={{ width: 32, height: 32, fontSize: 13 }}
+              >
+                {(user?.name ?? user?.email ?? "?").charAt(0).toUpperCase()}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => signOut({ redirectTo: "/login" })}
+              title="Sign out"
+              aria-label="Sign out"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                border: "1px solid var(--color-hairline)",
+                background: "transparent",
+                color: "var(--color-muted)",
+                cursor: "pointer",
+              }}
             >
-              F
-            </div>
+              <LogOut size={16} />
+            </button>
           </div>
         </div>
 
