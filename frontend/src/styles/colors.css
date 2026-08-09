@@ -41,4 +41,19 @@
   --color-warning:  #d4a017;
   --color-error:    #c64545;
   --color-info:     #5b8fbf;
+
+  /* ── Chart series ───────────────────────────────────────────────────
+     Validated categorical order (CVD-safe against --color-surface-card;
+     low-contrast slots are relieved by an always-present legend).
+     Do NOT reorder, and do not use brand indigo as a series color. */
+  --color-chart-1: #2a78d6;  /* blue    */
+  --color-chart-2: #eb6834;  /* orange  */
+  --color-chart-3: #1baf7a;  /* aqua    */
+  --color-chart-4: #eda100;  /* yellow  */
+  --color-chart-5: #e87ba4;  /* magenta */
+  --color-chart-6: #008300;  /* green   */
+  --color-chart-7: #4a3aa7;  /* violet  */
+  --color-chart-8: #e34948;  /* red     */
+  --color-chart-cash:  #8e8b82;  /* neutral — cash is uninvested, not a series */
+  --color-chart-other: #c9c3b6;  /* folded tail beyond 8 series */
 }

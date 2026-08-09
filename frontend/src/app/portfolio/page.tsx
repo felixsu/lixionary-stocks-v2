@@ -1,10 +1,11 @@
 "use client";
 
-import { Plus, Sparkles, X } from "lucide-react";
+import { Check, Pencil, Plus, Sparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 
+import { AllocationDonut } from "@/components/AllocationDonut";
 import { Badge } from "@/components/Badge";
 import { ErrorCard } from "@/components/ErrorCard";
 import { PortfolioChat } from "@/components/PortfolioChat";
@@ -26,6 +27,7 @@ import {
   generateRecommendations,
   portfolioApi,
 } from "@/lib/portfolio";
+import { IDR_PRICE_MAX, IDR_PRICE_MIN, parseIdrNumber } from "@/lib/parse-idr";
 import { computeScorecard } from "@/lib/signals";
 
 const REFRESH_MS = 60_000;
@@ -77,19 +79,31 @@ function SummaryTile({ label, value, sub, color }: { label: string; value: strin
   );
 }
 
-function ManualAddForm({ onAdded }: { onAdded: () => void }) {
-  const [symbol, setSymbol] = useState("");
-  const [lots, setLots] = useState("");
-  const [price, setPrice] = useState("");
+function ManualAddForm({
+  editing,
+  onSaved,
+  onCancel,
+}: {
+  editing: Position | null;
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const [symbol, setSymbol] = useState(editing?.symbol ?? "");
+  const [lots, setLots] = useState(editing ? String(editing.lots) : "");
+  const [price, setPrice] = useState(editing ? String(editing.avg_price) : "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function add() {
+  async function save() {
     const sym = symbol.trim().toUpperCase();
-    const nLots = parseInt(lots, 10);
-    const nPrice = parseFloat(price.replace(/\./g, "").replace(",", "."));
-    if (!sym || !(nLots > 0) || !(nPrice > 0)) {
-      setError("Fill symbol, lots (>0), and average price (>0).");
+    const nLots = parseIdrNumber(lots);
+    const nPrice = parseIdrNumber(price);
+    if (!sym || nLots == null || !Number.isInteger(nLots) || nLots < 1 || nLots > 1_000_000) {
+      setError("Fill symbol and a whole number of lots (1–1.000.000).");
+      return;
+    }
+    if (nPrice == null || nPrice < IDR_PRICE_MIN || nPrice > IDR_PRICE_MAX) {
+      setError("Avg price looks wrong — enter the per-share price in rupiah (e.g. 710 or 6.300).");
       return;
     }
     setBusy(true);
@@ -99,7 +113,7 @@ function ManualAddForm({ onAdded }: { onAdded: () => void }) {
       setSymbol("");
       setLots("");
       setPrice("");
-      onAdded();
+      onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -115,6 +129,7 @@ function ManualAddForm({ onAdded }: { onAdded: () => void }) {
           style={{ width: 110 }}
           placeholder="Symbol"
           value={symbol}
+          disabled={editing != null}
           onChange={(e) => setSymbol(e.target.value)}
         />
         <input
@@ -128,19 +143,113 @@ function ManualAddForm({ onAdded }: { onAdded: () => void }) {
         <input
           className="input"
           style={{ flex: 1 }}
-          placeholder="Avg price (IDR)"
+          placeholder="Avg price/share (IDR)"
           inputMode="decimal"
           value={price}
           onChange={(e) => setPrice(e.target.value)}
         />
-        <button className="btn btn-secondary" disabled={busy} onClick={add}>
-          <Plus size={15} /> Add
+        <button className="btn btn-secondary" disabled={busy} onClick={save}>
+          {editing ? <Check size={15} /> : <Plus size={15} />} {editing ? "Save" : "Add"}
         </button>
+        {editing && (
+          <button className="btn btn-ghost" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+        )}
       </div>
       {error && (
         <span className="caption" style={{ color: "var(--color-error)" }}>
           {error}
         </span>
+      )}
+    </div>
+  );
+}
+
+function CashTile({ cash, onSaved }: { cash: number; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
+
+  async function save() {
+    // 0 is allowed here (clearing the reserve) — parseIdrNumber rejects it,
+    // so special-case the literal zero forms.
+    const trimmed = value.trim();
+    const amount = /^0+$/.test(trimmed) ? 0 : parseIdrNumber(trimmed);
+    if (amount == null || amount > 1_000_000_000_000) {
+      setError(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      await portfolioApi.putCash(amount);
+      setEditing(false);
+      setError(false);
+      onSaved();
+    } catch {
+      setError(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ flex: 1, padding: "16px 20px", position: "relative" }}>
+      <div className="caption">Cash reserve</div>
+      {editing ? (
+        <div style={{ display: "flex", gap: 6, marginTop: 4, alignItems: "center" }}>
+          <input
+            className="input"
+            style={{ flex: 1, minWidth: 0, fontFamily: "var(--font-mono)" }}
+            inputMode="decimal"
+            autoFocus
+            value={value}
+            placeholder="e.g. 5.000.000"
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") save();
+              if (e.key === "Escape") setEditing(false);
+            }}
+          />
+          <button className="btn-icon" style={{ width: 26, height: 26 }} title="Save" disabled={busy} onClick={save}>
+            <Check size={13} />
+          </button>
+          <button
+            className="btn-icon"
+            style={{ width: 26, height: 26 }}
+            title="Cancel"
+            disabled={busy}
+            onClick={() => {
+              setEditing(false);
+              setError(false);
+            }}
+          >
+            <X size={13} />
+          </button>
+        </div>
+      ) : (
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 22, color: "var(--color-ink)", marginTop: 4 }}>
+          Rp {fmtIdr(cash)}
+        </div>
+      )}
+      {error && (
+        <div className="caption" style={{ color: "var(--color-error)", marginTop: 2 }}>
+          Enter an amount in rupiah, e.g. 5.000.000
+        </div>
+      )}
+      {!editing && (
+        <button
+          className="btn-icon"
+          style={{ width: 26, height: 26, position: "absolute", top: 12, right: 12 }}
+          title="Edit cash reserve"
+          onClick={() => {
+            setValue(cash > 0 ? String(cash) : "");
+            setEditing(true);
+          }}
+        >
+          <Pencil size={12} />
+        </button>
       )}
     </div>
   );
@@ -157,6 +266,7 @@ export default function PortfolioPage() {
   const [recError, setRecError] = useState<string | null>(null);
   const [portfolioNote, setPortfolioNote] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Position | null>(null);
 
   const data = portfolio.data;
 
@@ -251,7 +361,7 @@ export default function PortfolioPage() {
     }
   }
 
-  const gridCols = "90px 60px 1fr 1fr 1fr 1fr 90px 110px 40px";
+  const gridCols = "90px 60px 1fr 1fr 1fr 1fr 90px 110px 68px";
 
   return (
     <div
@@ -281,6 +391,7 @@ export default function PortfolioPage() {
             sub={data.totals.pnl_pct != null ? fmtPctSigned(data.totals.pnl_pct) : undefined}
             color={pnlColor(data.totals.pnl)}
           />
+          <CashTile cash={data.cash} onSaved={() => portfolio.mutate()} />
         </div>
       )}
 
@@ -369,15 +480,25 @@ export default function PortfolioPage() {
                       </span>
                     )}
                   </span>
-                  <button
-                    className="btn-icon"
-                    style={{ width: 26, height: 26 }}
-                    title="Remove position"
-                    disabled={removing === p.symbol}
-                    onClick={() => removePosition(p.symbol)}
-                  >
-                    <X size={12} />
-                  </button>
+                  <span style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                    <button
+                      className="btn-icon"
+                      style={{ width: 26, height: 26 }}
+                      title="Edit position"
+                      onClick={() => setEditing(p)}
+                    >
+                      <Pencil size={12} />
+                    </button>
+                    <button
+                      className="btn-icon"
+                      style={{ width: 26, height: 26 }}
+                      title="Remove position"
+                      disabled={removing === p.symbol}
+                      onClick={() => removePosition(p.symbol)}
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
                 </div>
               ))}
             </div>
@@ -398,8 +519,20 @@ export default function PortfolioPage() {
           )}
 
           <div className="card" style={{ padding: 16 }}>
-            <span className="field-label">Add manually</span>
-            <ManualAddForm onAdded={() => portfolio.mutate()} />
+            <span className="field-label">
+              {editing ? `Edit ${editing.symbol}` : "Add manually"}
+            </span>
+            {/* key remounts the form when the edit target changes, so useState
+                initializers pick up the prefill without effect-syncing. */}
+            <ManualAddForm
+              key={editing?.symbol ?? "new"}
+              editing={editing}
+              onSaved={() => {
+                setEditing(null);
+                portfolio.mutate();
+              }}
+              onCancel={() => setEditing(null)}
+            />
           </div>
 
           <span className="caption" style={{ color: "var(--color-muted-soft)" }}>
@@ -408,12 +541,20 @@ export default function PortfolioPage() {
           </span>
         </div>
 
-        {/* ── Chat ──────────────────────────────────────────────────────── */}
-        <PortfolioChat
-          portfolio={data ?? null}
-          symbols={symbols ?? []}
-          onPortfolioChanged={() => portfolio.mutate()}
-        />
+        {/* ── Allocation + chat ─────────────────────────────────────────── */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+          {data && (
+            <div className="card" style={{ padding: 16 }}>
+              <span className="field-label">Allocation</span>
+              <AllocationDonut portfolio={data} />
+            </div>
+          )}
+          <PortfolioChat
+            portfolio={data ?? null}
+            symbols={symbols ?? []}
+            onPortfolioChanged={() => portfolio.mutate()}
+          />
+        </div>
       </div>
     </div>
   );

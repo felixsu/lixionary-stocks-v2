@@ -8,6 +8,7 @@
 
 import { api, encodeSymbol } from "./api";
 import { type LlmSettings, chat } from "./llm";
+import { IDR_PRICE_MAX, IDR_PRICE_MIN } from "./parse-idr";
 
 export const SHARES_PER_LOT = 100;
 
@@ -39,6 +40,7 @@ export interface Position {
 
 export interface Portfolio {
   positions: Position[];
+  cash: number;
   totals: {
     cost: number;
     market_value: number;
@@ -70,6 +72,11 @@ export const portfolioApi = {
   delete: (symbol: string) =>
     request<{ deleted: string }>(`/api/portfolio/${encodeSymbol(symbol)}`, {
       method: "DELETE",
+    }),
+  putCash: (amount: number) =>
+    request<{ amount: number }>("/api/portfolio/cash", {
+      method: "PUT",
+      body: JSON.stringify({ amount }),
     }),
   patchRecommendation: (symbol: string, rec: Recommendation) =>
     request<{ stored: string }>(`/api/portfolio/${encodeSymbol(symbol)}/recommendation`, {
@@ -108,7 +115,9 @@ Rules:
 - NEVER invent lots or prices. If either is missing for a buy, return "actions": [] and ask for exactly what's missing in "reply".
 - NEVER compute averages, totals, or P&L yourself — emit the raw purchase and let the app do the math.
 - Symbols are IDX tickers (usually 4 letters). Uppercase them. If the user names a company instead of a ticker ("Bank Central Asia"), map it only when the tracked list makes it unambiguous; otherwise ask.
-- Numbers like "6.3k"/"6300"/"Rp6.300" all mean 6300. Indonesian thousands separators use dots.
+- "avg_price"/"price" are ALWAYS the per-SHARE price in rupiah — never per lot and never a total. IDX per-share prices are whole rupiah, typically 50–30,000. If the user gives a per-lot or total amount, ask for the per-share price instead.
+- Number reading: "6.3k"/"6300"/"Rp6.300" all mean 6300. A dot followed by exactly 3 digits is an Indonesian thousands separator ("6.300" = 6300); a dot or comma followed by 1–2 digits is a decimal ("710.00" = 710, "6300,5" = 6300.5).
+- If a stated per-share price falls outside 50–1,000,000 rupiah, do NOT act — return "actions": [] and ask the user to confirm the price.
 - Multiple statements in one message → multiple actions.
 - Keep "reply" to one or two sentences; confirm what you understood.
 
@@ -216,6 +225,11 @@ export async function executeActions(
           if (!(action.lots > 0) || !(action.avg_price > 0)) {
             throw new Error("lots and average price must be positive");
           }
+          if (action.avg_price < IDR_PRICE_MIN || action.avg_price > IDR_PRICE_MAX) {
+            throw new Error(
+              `price ${fmtIdr(action.avg_price)} is outside the plausible IDX per-share range (1–1.000.000 IDR)`,
+            );
+          }
           await ensureSubscribed(symbol);
           await portfolioApi.put(symbol, Math.round(action.lots), action.avg_price);
           state.set(symbol, { lots: Math.round(action.lots), avg: action.avg_price });
@@ -228,6 +242,11 @@ export async function executeActions(
         case "add_purchase": {
           if (!(action.lots > 0) || !(action.price > 0)) {
             throw new Error("lots and price must be positive");
+          }
+          if (action.price < IDR_PRICE_MIN || action.price > IDR_PRICE_MAX) {
+            throw new Error(
+              `price ${fmtIdr(action.price)} is outside the plausible IDX per-share range (1–1.000.000 IDR)`,
+            );
           }
           await ensureSubscribed(symbol);
           const cur = state.get(symbol);

@@ -17,6 +17,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 SHARES_PER_LOT = 100
 
 _PROJECTION = {"_id": 0}
+_CASH_ID = "portfolio_cash"
 
 
 class PositionMissing(Exception):
@@ -82,6 +83,7 @@ async def list_positions(db: AsyncIOMotorDatabase) -> dict[str, Any]:
 
     return {
         "positions": positions,
+        "cash": await get_cash(db),
         "totals": {
             "cost": total_cost,
             "market_value": total_value,
@@ -90,6 +92,20 @@ async def list_positions(db: AsyncIOMotorDatabase) -> dict[str, Any]:
             "unpriced_cost": total_cost - valued_cost,
         },
     }
+
+
+async def get_cash(db: AsyncIOMotorDatabase) -> float:
+    doc = await db.settings.find_one({"_id": _CASH_ID})
+    return float(doc["amount"]) if doc else 0.0
+
+
+async def set_cash(db: AsyncIOMotorDatabase, amount: float) -> dict[str, Any]:
+    await db.settings.update_one(
+        {"_id": _CASH_ID},
+        {"$set": {"amount": amount, "updated_at": datetime.now(UTC)}},
+        upsert=True,
+    )
+    return {"amount": amount}
 
 
 async def upsert_position(

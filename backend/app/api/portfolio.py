@@ -13,8 +13,14 @@ router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
 
 class PositionIn(BaseModel):
     lots: int = Field(gt=0, le=1_000_000)
-    avg_price: float = Field(gt=0)
+    # Per-SHARE price in IDR. The ceiling catches thousands-separator parsing
+    # accidents ("710.00" read as 71000 is bad enough; 71 million is absurd).
+    avg_price: float = Field(gt=0, le=1_000_000)
     notes: str | None = Field(default=None, max_length=500)
+
+
+class CashIn(BaseModel):
+    amount: float = Field(ge=0, le=1_000_000_000_000)  # 0 clears it; 1T IDR ceiling
 
 
 class RecommendationIn(BaseModel):
@@ -33,6 +39,13 @@ class RecommendationIn(BaseModel):
 @router.get("")
 async def get_portfolio():
     return await svc.list_positions(get_db())
+
+
+# Must be declared BEFORE the /{symbol} routes, or "cash" is captured as a
+# symbol. Reads come embedded in GET /api/portfolio ("cash" key).
+@router.put("/cash")
+async def put_cash(payload: CashIn):
+    return await svc.set_cash(get_db(), payload.amount)
 
 
 @router.put("/{symbol}")
