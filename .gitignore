@@ -2,6 +2,7 @@
 .env.local
 *.env
 !.env.example
+docker-compose.override.yml
 
 __pycache__/
 *.py[cod]
