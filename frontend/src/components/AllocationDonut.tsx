@@ -9,6 +9,7 @@ import { useState } from "react";
 
 import { type Portfolio } from "@/lib/portfolio";
 import { annulusPath, computeSlices } from "@/lib/donut-math";
+import { masked, useHideAmounts } from "@/lib/privacy";
 
 const SERIES_VARS = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => `var(--color-chart-${i})`);
 const CASH_LABEL = "Cash";
@@ -18,6 +19,7 @@ const fmtIdr = (v: number) => v.toLocaleString("id-ID", { maximumFractionDigits:
 
 export function AllocationDonut({ portfolio }: { portfolio: Portfolio }) {
   const [hovered, setHovered] = useState<string | null>(null);
+  const { hidden } = useHideAmounts();
 
   // Color slot follows the backend's alphabetical position order.
   const colorBySymbol = new Map<string, string>(
@@ -70,7 +72,7 @@ export function AllocationDonut({ portfolio }: { portfolio: Portfolio }) {
               onMouseEnter={() => setHovered(s.label)}
               onMouseLeave={() => setHovered(null)}
             >
-              <title>{`${s.label}: Rp ${fmtIdr(s.value)} (${s.pct.toFixed(1)}%)`}</title>
+              <title>{`${s.label}: ${masked(hidden, `Rp ${fmtIdr(s.value)}`)} (${s.pct.toFixed(1)}%)`}</title>
             </path>
           ))}
         </svg>
@@ -87,7 +89,7 @@ export function AllocationDonut({ portfolio }: { portfolio: Portfolio }) {
           }}
         >
           <span style={{ fontFamily: "var(--font-mono)", fontSize: 15, color: "var(--color-ink)" }}>
-            Rp {fmtIdr(totalAssets)}
+            {masked(hidden, `Rp ${fmtIdr(totalAssets)}`)}
           </span>
           <span className="caption" style={{ color: "var(--color-muted)" }}>
             Total assets
@@ -120,7 +122,7 @@ export function AllocationDonut({ portfolio }: { portfolio: Portfolio }) {
               className="mono"
               style={{ color: "var(--color-muted)", fontSize: 12, minWidth: 90, textAlign: "right" }}
             >
-              Rp {fmtIdr(s.value)}
+              {masked(hidden, `Rp ${fmtIdr(s.value)}`)}
             </span>
           </div>
         ))}
