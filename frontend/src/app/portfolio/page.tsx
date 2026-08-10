@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Pencil, Plus, Sparkles, X } from "lucide-react";
+import { Check, Eye, EyeOff, Pencil, Plus, Sparkles, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
@@ -10,15 +10,7 @@ import { Badge } from "@/components/Badge";
 import { ErrorCard } from "@/components/ErrorCard";
 import { PortfolioChat } from "@/components/PortfolioChat";
 import { Skeleton } from "@/components/Skeleton";
-import {
-  type CandlesOut,
-  type NewsList,
-  type SymbolOut,
-  candlesKey,
-  fetcher,
-  newsKey,
-} from "@/lib/api";
-import { ichimoku, macd, rsi, supportResistance } from "@/lib/indicators";
+import { type SymbolOut, fetcher } from "@/lib/api";
 import { useLlmSettings } from "@/lib/llm";
 import {
   type Portfolio,
@@ -28,7 +20,8 @@ import {
   portfolioApi,
 } from "@/lib/portfolio";
 import { IDR_PRICE_MAX, IDR_PRICE_MIN, parseIdrNumber } from "@/lib/parse-idr";
-import { computeScorecard } from "@/lib/signals";
+import { analyzePositions } from "@/lib/position-analysis";
+import { masked, maskedPlain, useHideAmounts } from "@/lib/privacy";
 
 const REFRESH_MS = 60_000;
 
@@ -166,7 +159,15 @@ function ManualAddForm({
   );
 }
 
-function CashTile({ cash, onSaved }: { cash: number; onSaved: () => void }) {
+function CashTile({
+  cash,
+  hidden,
+  onSaved,
+}: {
+  cash: number;
+  hidden: boolean;
+  onSaved: () => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -230,7 +231,8 @@ function CashTile({ cash, onSaved }: { cash: number; onSaved: () => void }) {
         </div>
       ) : (
         <div style={{ fontFamily: "var(--font-mono)", fontSize: 22, color: "var(--color-ink)", marginTop: 4 }}>
-          Rp {fmtIdr(cash)}
+          {/* Edit mode force-shows the real value — the pencil is an explicit reveal. */}
+          {masked(hidden, `Rp ${fmtIdr(cash)}`)}
         </div>
       )}
       {error && (
@@ -267,6 +269,7 @@ export default function PortfolioPage() {
   const [portfolioNote, setPortfolioNote] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [editing, setEditing] = useState<Position | null>(null);
+  const { hidden, toggle: toggleHidden } = useHideAmounts();
 
   const data = portfolio.data;
 
@@ -275,56 +278,13 @@ export default function PortfolioPage() {
     setRecBusy(true);
     setRecError(null);
     try {
-      // Build the analysis payload per position from the app's existing stack.
-      const perPosition = await Promise.all(
-        data.positions.map(async (p) => {
-          let scorecard = null;
-          let newsTags: object[] = [];
-          try {
-            const candles = await fetcher<CandlesOut>(candlesKey(p.symbol, "1d", 200));
-            if (candles.bars.length >= 60) {
-              const bars = candles.bars;
-              const sc = computeScorecard(bars, {
-                ichimoku: ichimoku(bars),
-                macd: macd(bars.map((b) => b.c)),
-                rsi: rsi(bars.map((b) => b.c)),
-                sr: supportResistance(bars),
-              });
-              scorecard = {
-                overall: sc.overall,
-                bullish: sc.bullish,
-                neutral: sc.neutral,
-                bearish: sc.bearish,
-                signals: sc.signals.map((s) => ({ name: s.name, verdict: s.verdict, value: s.value })),
-              };
-            }
-            const news = await fetcher<NewsList>(newsKey({ symbol: p.symbol, limit: 5 }));
-            newsTags = news.items
-              .filter((i) => i.analysis)
-              .map((i) => ({
-                title: i.title,
-                sentiment: i.analysis!.sentiment,
-                direction: i.analysis!.symbols.find((s) => s.symbol === p.symbol)?.direction,
-              }));
-          } catch {
-            /* missing data for a symbol must not sink the batch */
-          }
-          return {
-            symbol: p.symbol,
-            lots: p.lots,
-            avg_price: p.avg_price,
-            last_close: p.last_close,
-            pnl_pct: p.pnl_pct,
-            day_change_pct: p.day_change_pct,
-            technical_scorecard_daily: scorecard,
-            recent_news: newsTags,
-          };
-        }),
-      );
+      const perPosition = await analyzePositions(data.positions);
 
       const response = await generateRecommendations(settings, {
+        cash: data.cash,
+        totals: data.totals,
         positions: perPosition,
-        note: "IDX portfolio; prices IDR; 1 lot = 100 shares",
+        note: "IDX portfolio; prices IDR; 1 lot = 100 shares; cash is uninvested IDR available for new buys",
       });
 
       const now = new Date().toISOString();
@@ -379,19 +339,23 @@ export default function PortfolioPage() {
         <Skeleton height={90} />
       ) : (
         <div style={{ display: "flex", gap: 16 }}>
-          <SummaryTile label="Total cost" value={`Rp ${fmtIdr(data.totals.cost)}`} />
+          <SummaryTile label="Total cost" value={masked(hidden, `Rp ${fmtIdr(data.totals.cost)}`)} />
           <SummaryTile
             label="Market value"
-            value={`Rp ${fmtIdr(data.totals.market_value)}`}
-            sub={data.totals.unpriced_cost > 0 ? `excl. Rp ${fmtIdr(data.totals.unpriced_cost)} unpriced` : undefined}
+            value={masked(hidden, `Rp ${fmtIdr(data.totals.market_value)}`)}
+            sub={
+              data.totals.unpriced_cost > 0
+                ? `excl. ${masked(hidden, `Rp ${fmtIdr(data.totals.unpriced_cost)}`)} unpriced`
+                : undefined
+            }
           />
           <SummaryTile
             label="Unrealized P&L"
-            value={`Rp ${fmtIdr(data.totals.pnl)}`}
+            value={masked(hidden, `Rp ${fmtIdr(data.totals.pnl)}`)}
             sub={data.totals.pnl_pct != null ? fmtPctSigned(data.totals.pnl_pct) : undefined}
             color={pnlColor(data.totals.pnl)}
           />
-          <CashTile cash={data.cash} onSaved={() => portfolio.mutate()} />
+          <CashTile cash={data.cash} hidden={hidden} onSaved={() => portfolio.mutate()} />
         </div>
       )}
 
@@ -400,15 +364,25 @@ export default function PortfolioPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <h5 style={{ margin: 0 }}>Positions</h5>
-            <button
-              className="btn btn-primary btn-sm"
-              disabled={recBusy || !configured || !data || data.positions.length === 0}
-              onClick={getRecommendations}
-              title={!configured ? "Configure an LLM provider in Settings first" : undefined}
-            >
-              <Sparkles size={14} className={recBusy ? "lx-spin" : undefined} />
-              {recBusy ? "Analysing…" : "Get recommendations"}
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                className="btn-icon"
+                style={{ width: 28, height: 28 }}
+                title={hidden ? "Show amounts" : "Hide amounts"}
+                onClick={toggleHidden}
+              >
+                {hidden ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+              <button
+                className="btn btn-primary btn-sm"
+                disabled={recBusy || !configured || !data || data.positions.length === 0}
+                onClick={getRecommendations}
+                title={!configured ? "Configure an LLM provider in Settings first" : undefined}
+              >
+                <Sparkles size={14} className={recBusy ? "lx-spin" : undefined} />
+                {recBusy ? "Analysing…" : "Get recommendations"}
+              </button>
+            </div>
           </div>
 
           {portfolio.error ? (
@@ -448,19 +422,19 @@ export default function PortfolioPage() {
                     {p.symbol}
                   </Link>
                   <span className="text-right mono" style={{ fontSize: 13 }}>
-                    {p.lots}
+                    {maskedPlain(hidden, String(p.lots))}
                   </span>
                   <span className="text-right mono" style={{ fontSize: 13 }}>
-                    {fmtIdr(p.avg_price)}
+                    {maskedPlain(hidden, fmtIdr(p.avg_price))}
                   </span>
                   <span className="text-right mono" style={{ fontSize: 13 }}>
                     {p.last_close != null ? fmtIdr(p.last_close) : "—"}
                   </span>
                   <span className="text-right mono" style={{ fontSize: 13 }}>
-                    {p.market_value != null ? fmtIdr(p.market_value) : "—"}
+                    {p.market_value != null ? maskedPlain(hidden, fmtIdr(p.market_value)) : "—"}
                   </span>
                   <span className="text-right mono" style={{ fontSize: 13, color: pnlColor(p.pnl) }}>
-                    {p.pnl != null ? fmtIdr(p.pnl) : "—"}
+                    {p.pnl != null ? maskedPlain(hidden, fmtIdr(p.pnl)) : "—"}
                   </span>
                   <span className="text-right mono" style={{ fontSize: 13, color: pnlColor(p.pnl) }}>
                     {p.pnl_pct != null ? fmtPctSigned(p.pnl_pct) : "—"}

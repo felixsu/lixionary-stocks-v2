@@ -9,6 +9,7 @@
 import { api, encodeSymbol } from "./api";
 import { type LlmSettings, chat } from "./llm";
 import { IDR_PRICE_MAX, IDR_PRICE_MIN } from "./parse-idr";
+import { type PositionAnalysis } from "./position-analysis";
 
 export const SHARES_PER_LOT = 100;
 
@@ -91,7 +92,8 @@ export type ChatAction =
   | { type: "set_position"; symbol: string; lots: number; avg_price: number }
   | { type: "add_purchase"; symbol: string; lots: number; price: number }
   | { type: "sell_lots"; symbol: string; lots: number }
-  | { type: "remove_position"; symbol: string };
+  | { type: "remove_position"; symbol: string }
+  | { type: "analyze"; symbols: string[] };
 
 export interface ChatTurn {
   role: "user" | "assistant";
@@ -100,28 +102,37 @@ export interface ChatTurn {
   results?: { ok: boolean; text: string }[];
 }
 
-const CHAT_SYSTEM_PROMPT = `You are a portfolio entry assistant for Indonesian (IDX) stock holdings inside a personal analytics app. The user describes holdings in free text (often mixing English and Indonesian). Your job: turn statements into structured actions, and ASK for anything missing before acting. 1 lot = 100 shares; prices are in IDR (rupiah).
+const CHAT_SYSTEM_PROMPT = `You are the portfolio assistant for Indonesian (IDX) stock holdings inside a personal analytics app. The user writes free text (often mixing English and Indonesian). You have two jobs:
+1) DATA ENTRY — turn holding statements into structured actions, and ASK for anything missing before acting.
+2) ADVISOR — answer questions about the portfolio ("what should I do with BBCA?", "should I average down?").
+1 lot = 100 shares; prices are in IDR (rupiah).
 
 Respond with a single JSON object, no markdown fences:
-{"reply": "<short conversational reply>", "actions": [ ... ]}
+{"reply": "<reply text>", "actions": [ ... ]}
 
 Action shapes (use ONLY these):
 - {"type": "set_position", "symbol": "BBCA", "lots": 10, "avg_price": 6300}   // absolute: "I hold 10 lots of BBCA at average 6300"
 - {"type": "add_purchase", "symbol": "BBCA", "lots": 5, "price": 6000}        // incremental buy: "bought 5 more lots at 6000" — the APP computes the new average, never you
 - {"type": "sell_lots", "symbol": "BBCA", "lots": 3}                          // partial or full sale
 - {"type": "remove_position", "symbol": "BBCA"}                               // "remove BBCA" / "I closed my BBCA position"
+- {"type": "analyze", "symbols": ["BBCA"]}                                    // request the daily technical scorecard, volume and recent news for HELD positions before advising
 
-Rules:
+Advisory rules:
+- Every message includes the full portfolio (lots, avg price, last close, market value, P&L, any stored AI view), the cash reserve, and totals.
+- For "what should I do" questions about specific holdings, emit ONE analyze action for those symbols and use "reply" only to say you are looking at the data. When the message contains "analysis_data", answer directly and NEVER emit analyze again.
+- Ground advice in the provided numbers and cite them (P&L %, signal verdicts, RVOL, news sentiment). Never invent prices or news.
+- Any buy-more / average-down suggestion MUST be checked against the cash reserve: state the approximate cost (lots × 100 × price) and whether cash covers it. Illustrative arithmetic like this is allowed in advice — but stored positions are still only ever changed via actions, with the app doing the math.
+- Advisory replies: a short paragraph or up to 5 "- " bullet lines; you may bold key phrases with **...**. End with one short line noting this is informational analysis, not financial advice.
+
+Entry rules:
 - NEVER invent lots or prices. If either is missing for a buy, return "actions": [] and ask for exactly what's missing in "reply".
-- NEVER compute averages, totals, or P&L yourself — emit the raw purchase and let the app do the math.
+- NEVER compute averages, totals, or P&L for ACTIONS — emit the raw purchase and let the app do the math.
 - Symbols are IDX tickers (usually 4 letters). Uppercase them. If the user names a company instead of a ticker ("Bank Central Asia"), map it only when the tracked list makes it unambiguous; otherwise ask.
 - "avg_price"/"price" are ALWAYS the per-SHARE price in rupiah — never per lot and never a total. IDX per-share prices are whole rupiah, typically 50–30,000. If the user gives a per-lot or total amount, ask for the per-share price instead.
 - Number reading: "6.3k"/"6300"/"Rp6.300" all mean 6300. A dot followed by exactly 3 digits is an Indonesian thousands separator ("6.300" = 6300); a dot or comma followed by 1–2 digits is a decimal ("710.00" = 710, "6300,5" = 6300.5).
 - If a stated per-share price falls outside 50–1,000,000 rupiah, do NOT act — return "actions": [] and ask the user to confirm the price.
 - Multiple statements in one message → multiple actions.
-- Keep "reply" to one or two sentences; confirm what you understood.
-
-The current portfolio and the app's tracked symbols are provided with each message.`;
+- For pure entry messages keep "reply" to one or two sentences; confirm what you understood.`;
 
 interface ChatResponse {
   reply: string;
@@ -156,17 +167,34 @@ export async function sendChatMessage(
   userMessage: string,
   portfolio: Portfolio | null,
   trackedSymbols: { symbol: string; name: string | null }[],
+  analysisData?: PositionAnalysis[],
 ): Promise<ChatResponse> {
   const context = {
+    cash: portfolio?.cash ?? 0,
+    totals: portfolio?.totals ?? null,
     current_portfolio: (portfolio?.positions ?? []).map((p) => ({
       symbol: p.symbol,
       lots: p.lots,
       avg_price: p.avg_price,
       last_close: p.last_close,
+      market_value: p.market_value,
+      pnl: p.pnl,
       pnl_pct: p.pnl_pct,
+      day_change_pct: p.day_change_pct,
+      ai_view: p.recommendation
+        ? {
+            action: p.recommendation.action,
+            summary: p.recommendation.summary,
+            generated_at: p.recommendation.generated_at,
+          }
+        : null,
     })),
     tracked_symbols: trackedSymbols.map((s) => `${s.symbol} (${s.name ?? s.symbol})`),
   };
+
+  const analysisBlock = analysisData
+    ? `\n\nanalysis_data (you requested this; answer now, do NOT emit another analyze): ${JSON.stringify(analysisData)}`
+    : "";
 
   const messages = [
     { role: "system" as const, content: CHAT_SYSTEM_PROMPT },
@@ -177,7 +205,7 @@ export async function sendChatMessage(
     })),
     {
       role: "user" as const,
-      content: `${JSON.stringify(context)}\n\nUser message: ${userMessage}`,
+      content: `${JSON.stringify(context)}${analysisBlock}\n\nUser message: ${userMessage}`,
     },
   ];
 
@@ -214,6 +242,9 @@ export async function executeActions(
   };
 
   for (const action of actions) {
+    // Handled by the chat component's two-pass flow; a stray one that reaches
+    // the executor is a no-op, not an error (and has no `symbol` to validate).
+    if (action.type === "analyze") continue;
     const symbol = "symbol" in action ? action.symbol?.trim().toUpperCase() : "";
     try {
       if (!symbol || !/^[A-Z^][A-Z0-9.]{1,9}$/.test(symbol)) {
@@ -327,12 +358,12 @@ export function saveChatHistory(turns: ChatTurn[]): void {
 
 // ── Recommendations ─────────────────────────────────────────────────────────
 
-const REC_SYSTEM_PROMPT = `You are a technical analyst reviewing a personal IDX stock portfolio. For each position you receive: entry price, current price, P&L, a 10-signal technical scorecard for the daily timeframe, volume analysis, and recent news sentiment tags. Recommend ONE action per position based ONLY on this data.
+const REC_SYSTEM_PROMPT = `You are a technical analyst reviewing a personal IDX stock portfolio. You receive: available cash (IDR), portfolio totals, and for each position its entry price, current price, lots (1 lot = 100 shares), market value, P&L, a 10-signal daily technical scorecard, daily relative volume (RVOL vs the 20-session average), and recent news sentiment tags. Recommend ONE action per position based ONLY on this data.
 
 Respond with a single JSON object, no markdown fences:
-{"positions": [{"symbol": "...", "action": "add_more"|"hold"|"reduce"|"cut_loss"|"take_profit", "summary": "<one sentence>", "reasons": ["<2-3 short bullets citing the data>"]}], "portfolio_note": "<one sentence on overall portfolio risk, e.g. concentration>"}
+{"positions": [{"symbol": "...", "action": "add_more"|"hold"|"reduce"|"cut_loss"|"take_profit", "summary": "<one sentence>", "reasons": ["<2-3 short bullets citing the data>"]}], "portfolio_note": "<one sentence on overall portfolio risk: concentration, cash allocation>"}
 
-Guidance: "cut_loss" for deteriorating technicals with meaningful drawdown; "take_profit" for stretched gains with weakening signals; "add_more" only when technicals AND news support it; be conservative — "hold" is the default when evidence is mixed. This is informational analysis, not advice; the app shows a disclaimer.`;
+Guidance: "cut_loss" for deteriorating technicals with meaningful drawdown; "take_profit" for stretched gains with weakening signals; "add_more" (including averaging down) ONLY when technicals AND news support it AND available cash can plausibly fund a meaningful buy — one reason bullet must cite the cash constraint (approx cost = lots × 100 × price); never recommend add_more when cash is near zero. Be conservative — "hold" is the default when evidence is mixed. This is informational analysis, not advice; the app shows a disclaimer.`;
 
 export interface RecommendationResponse {
   positions: {

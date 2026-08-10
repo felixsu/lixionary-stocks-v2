@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { type SymbolOut } from "@/lib/api";
 import { useLlmSettings } from "@/lib/llm";
 import {
+  type ChatAction,
   type ChatTurn,
   type Portfolio,
   executeActions,
@@ -17,6 +18,31 @@ import {
   saveChatHistory,
   sendChatMessage,
 } from "@/lib/portfolio";
+import { analyzePositions } from "@/lib/position-analysis";
+
+/** Cap on symbols fetched per analyze round (each costs candles + news). */
+const MAX_ANALYZE_TARGETS = 6;
+
+/** Minimal chat text renderer: "- " bullets and **bold**, nothing else. */
+function ChatText({ text }: { text: string }) {
+  return (
+    <>
+      {text.split("\n").map((line, i) => {
+        const bullet = /^\s*[-•]\s+/.test(line);
+        const parts = line.replace(/^\s*[-•]\s+/, "").split(/\*\*(.+?)\*\*/g);
+        const spans = parts.map((p, j) => (j % 2 ? <strong key={j}>{p}</strong> : p));
+        return bullet ? (
+          <div key={i} style={{ display: "flex", gap: 6 }}>
+            <span>•</span>
+            <span>{spans}</span>
+          </div>
+        ) : (
+          <div key={i}>{spans}</div>
+        );
+      })}
+    </>
+  );
+}
 
 export function PortfolioChat({
   portfolio,
@@ -31,6 +57,7 @@ export function PortfolioChat({
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyNote, setBusyNote] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -52,22 +79,49 @@ export function PortfolioChat({
     setTurns(withUser);
 
     try {
-      const response = await sendChatMessage(
-        settings,
-        turns,
-        message,
-        portfolio,
-        symbols.map((s) => ({ symbol: s.symbol, name: s.name })),
-      );
+      const tracked = symbols.map((s) => ({ symbol: s.symbol, name: s.name }));
+      let response = await sendChatMessage(settings, turns, message, portfolio, tracked);
+
       let results: ChatTurn["results"];
-      if (response.actions.length > 0) {
+      const mutating = response.actions.filter((a) => a.type !== "analyze");
+      if (mutating.length > 0) {
         results = await executeActions(
-          response.actions,
+          mutating,
           portfolio,
           symbols.map((s) => s.symbol),
         );
         onPortfolioChanged();
       }
+
+      // Advisory two-pass: the model may request scorecard/volume/news for
+      // held symbols. Exactly one round — round-2 actions are dropped, so a
+      // misbehaving model can neither loop nor mutate on the follow-up.
+      const analyzeSyms = [
+        ...new Set(
+          response.actions
+            .filter((a): a is Extract<ChatAction, { type: "analyze" }> => a.type === "analyze")
+            .flatMap((a) => (Array.isArray(a.symbols) ? a.symbols : []))
+            .map((s) => String(s).trim().toUpperCase()),
+        ),
+      ];
+      if (analyzeSyms.length > 0 && portfolio) {
+        const targets = portfolio.positions
+          .filter((p) => analyzeSyms.includes(p.symbol))
+          .slice(0, MAX_ANALYZE_TARGETS);
+        if (targets.length > 0) {
+          setBusyNote(`analysing ${targets.map((t) => t.symbol).join(", ")}…`);
+          const analysisData = await analyzePositions(targets);
+          response = await sendChatMessage(
+            settings,
+            [...turns, { role: "user", content: message }, { role: "assistant", content: response.reply }],
+            message,
+            portfolio,
+            tracked,
+            analysisData,
+          );
+        }
+      }
+
       const next: ChatTurn[] = [
         ...withUser,
         { role: "assistant", content: response.reply, results },
@@ -89,6 +143,7 @@ export function PortfolioChat({
       saveChatHistory(next);
     } finally {
       setBusy(false);
+      setBusyNote(null);
     }
   }
 
@@ -144,12 +199,13 @@ export function PortfolioChat({
         {turns.length === 0 && (
           <div className="well">
             <p className="body-sm" style={{ margin: 0, color: "var(--color-muted)" }}>
-              Tell me about your holdings in plain language, e.g.:
+              Tell me about your holdings, or ask for advice, e.g.:
             </p>
             <ul style={{ margin: "6px 0 0 0", paddingLeft: 18 }}>
               <li className="caption">&ldquo;I hold 10 lots of BBCA at average 6300&rdquo;</li>
               <li className="caption">&ldquo;Bought 5 more lots of CUAN at 1200 today&rdquo;</li>
-              <li className="caption">&ldquo;Sold 3 lots of BUMI&rdquo;</li>
+              <li className="caption">&ldquo;What should I do with my BBCA position?&rdquo;</li>
+              <li className="caption">&ldquo;Should I average down on my losers?&rdquo;</li>
             </ul>
           </div>
         )}
@@ -160,11 +216,12 @@ export function PortfolioChat({
               <div
                 style={{
                   alignSelf: t.role === "user" ? "flex-end" : "flex-start",
-                  maxWidth: "85%",
+                  maxWidth: t.role === "user" ? "85%" : "95%",
                   padding: "8px 12px",
                   borderRadius: 12,
                   fontSize: 13,
                   lineHeight: 1.5,
+                  whiteSpace: "pre-wrap",
                   background:
                     t.role === "user"
                       ? "var(--color-surface-cream-strong)"
@@ -174,7 +231,7 @@ export function PortfolioChat({
                   color: "var(--color-body-strong)",
                 }}
               >
-                {t.content}
+                <ChatText text={t.content} />
               </div>
             )}
             {t.results?.map((r, j) => (
@@ -196,7 +253,7 @@ export function PortfolioChat({
 
         {busy && (
           <span className="caption" style={{ color: "var(--color-muted-soft)" }}>
-            thinking…
+            {busyNote ?? "thinking…"}
           </span>
         )}
       </div>
