@@ -11,6 +11,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 
 import type { Bar } from "./api";
+import { roundToTick, tickSize } from "./idx-ticks";
 import type { AiSignal, IchimokuResult, MacdResult, SupportResistance } from "./indicators";
 import type { Scorecard } from "./signals";
 import type { SessionRvol, VolumeSpike } from "./volume";
@@ -184,11 +185,37 @@ export async function chat(settings: LlmSettings, messages: ChatMessage[]): Prom
 
 // ── Prompt & result ─────────────────────────────────────────────────────────
 
+/**
+ * Actionable levels for the read, snapped to valid IDX ticks.
+ *
+ * Every field is independently optional. A bearish read has no long entry but
+ * still has a stop — that is precisely when someone already holding the stock
+ * needs one — and a read with no defined objective has no target.
+ */
+export interface TradePlan {
+  /** Where to buy. Null when there is no acceptable long setup right now. */
+  entry: number | null;
+  /** The level that invalidates the read. */
+  stop: number | null;
+  /** First objective, if the read defines one. */
+  target: number | null;
+  /** One line on what these levels are anchored to. */
+  basis: string;
+  /** Loss from entry to stop, percent. Null unless both are present. */
+  riskPct: number | null;
+  /** Gain from entry to target, percent. Null unless both are present. */
+  rewardPct: number | null;
+  /** Reward-to-risk ratio. Null unless entry, stop and target are all present. */
+  rr: number | null;
+}
+
 export interface AnalysisResult {
   stance: "bullish" | "bearish" | "neutral";
   summary: string;
   bullets: string[];
   risks: string[];
+  /** Null when the model declined to give levels, or gave incoherent ones. */
+  plan: TradePlan | null;
   generatedAt: string;
   provider: string;
   model: string;
@@ -207,6 +234,8 @@ export interface AnalysisInput {
   macd: MacdResult;
   ichimoku: IchimokuResult;
   sr: SupportResistance;
+  /** Latest Wilder ATR(14), for sizing the stop against real volatility. */
+  atr: number | null;
   heuristic: AiSignal;
   scorecard: Scorecard | null;
   sessionVolume: SessionRvol | null;
@@ -217,7 +246,14 @@ export interface AnalysisInput {
 const SYSTEM_PROMPT = `You are a technical analyst covering Indonesia Stock Exchange (IDX) equities. You are given computed indicator data for one stock on one timeframe; the price feed is delayed about 10 minutes. Analyse ONLY the data provided — do not invent news, fundamentals, or prices.
 
 Respond with a single JSON object, no markdown fences, exactly this shape:
-{"stance": "bullish"|"bearish"|"neutral", "summary": "<one sentence overall read>", "bullets": ["<3 to 5 short observations grounded in the data>"], "risks": ["<1 to 2 things that would invalidate this read>"]}
+{"stance": "bullish"|"bearish"|"neutral", "summary": "<one sentence overall read>", "bullets": ["<3 to 5 short observations grounded in the data>"], "risks": ["<1 to 2 things that would invalidate this read>"], "trade_plan": {"entry": <number|null>, "stop": <number|null>, "target": <number|null>, "basis": "<one line naming the levels these are anchored to>"}}
+
+Rules for trade_plan — the user trades long only, so never propose a short:
+- entry: the price to buy at. Use null when nothing in the data supports a long right now (a bearish read, or price extended far above every support). Do not invent an entry just to fill the field.
+- stop: the price that invalidates the read. Give one whenever you give an entry, AND also when stance is bearish — a holder needs an exit level exactly then. It must sit below entry, below a structural level (support, kijun, cloud bottom, a swing low), and further than 1x atr14 from entry so ordinary volatility does not trigger it.
+- target: the first realistic objective above entry — usually resistance or the next structural level. Null if the data defines none. Aim for at least 1.5x the entry-to-stop distance; if no target that far is justified by the data, say so in basis rather than inventing one.
+- Every price must be a plain number in rupiah, already rounded to the stock's tick_size given in the payload. No strings, no ranges, no currency symbols.
+- basis: name the actual levels, e.g. "entry on pullback to kijun 745; stop below the 40-bar swing low 700; target at resistance 830".
 
 Be specific and quantitative (cite the numbers you were given). This is informational analysis, not investment advice, and the app already displays a disclaimer — do not add one.`;
 
@@ -261,7 +297,9 @@ export function buildAnalysisMessages(input: AnalysisInput): ChatMessage[] {
       },
       support: round2(input.sr.support),
       resistance: round2(input.sr.resistance),
+      atr14: input.atr != null ? round2(input.atr) : null,
     },
+    tick_size: tickSize(price),
     volume: {
       session_rvol: input.sessionVolume
         ? {
@@ -311,8 +349,75 @@ function round4(v: number | null): number | null {
   return v == null ? null : Math.round(v * 10000) / 10000;
 }
 
+/** How far from the last price a proposed level may sit before we distrust it. */
+const MAX_LEVEL_DRIFT = 0.4;
+
+function finitePositive(v: unknown): number | null {
+  const n = typeof v === "string" ? Number(v.replace(/[^\d.-]/g, "")) : v;
+  return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * Turn the model's raw levels into a plan we are willing to display.
+ *
+ * Levels are snapped to valid IDX ticks, then checked for coherence: a stop at
+ * or above the entry is not a stop, and a level 3x away from the last price is
+ * a hallucination rather than a setup. Anything incoherent is dropped —
+ * individually where the rest still stands, entirely when nothing survives —
+ * because a wrong number here is far more costly than a missing one.
+ */
+export function normalizePlan(rawPlan: unknown, lastPrice: number): TradePlan | null {
+  if (!rawPlan || typeof rawPlan !== "object") return null;
+  const src = rawPlan as Record<string, unknown>;
+
+  const snap = (v: unknown, mode: "down" | "up" | "nearest"): number | null => {
+    const n = finitePositive(v);
+    if (n == null) return null;
+    // A level far from the last price means the model lost the plot, not that
+    // it found a distant setup.
+    if (Number.isFinite(lastPrice) && lastPrice > 0) {
+      if (Math.abs(n - lastPrice) / lastPrice > MAX_LEVEL_DRIFT) return null;
+    }
+    return roundToTick(n, mode);
+  };
+
+  // Round each level the conservative way: a stop below its ideal and a target
+  // above it both understate the plan rather than flatter it.
+  let entry = snap(src.entry, "nearest");
+  let stop = snap(src.stop, "down");
+  let target = snap(src.target, "up");
+
+  if (entry != null && stop != null && stop >= entry) stop = null;
+  if (entry != null && target != null && target <= entry) target = null;
+  // Without an entry the other two have nothing to be measured against, except
+  // a stop — which stands alone as an exit level for an existing holder.
+  if (entry == null) target = null;
+  if (entry == null && stop == null) return null;
+
+  const risk = entry != null && stop != null ? entry - stop : null;
+  const reward = entry != null && target != null ? target - entry : null;
+  const riskPct = risk != null && entry != null ? (risk / entry) * 100 : null;
+  const rewardPct = reward != null && entry != null ? (reward / entry) * 100 : null;
+  // From the raw distances, not the two percentages: dividing one rounded
+  // percentage by another turns an exact 1.75 into 1.7499999999999998.
+  const rr = risk != null && reward != null && risk > 0 ? reward / risk : null;
+
+  return {
+    entry,
+    stop,
+    target,
+    basis: typeof src.basis === "string" ? src.basis : "",
+    riskPct: round2(riskPct),
+    rewardPct: round2(rewardPct),
+    rr: rr != null ? Math.round(rr * 10) / 10 : null,
+  };
+}
+
 /** Parse the model's reply, tolerating markdown fences and stray prose. */
-export function parseAnalysis(raw: string): Omit<AnalysisResult, "generatedAt" | "provider" | "model"> {
+export function parseAnalysis(
+  raw: string,
+  lastPrice: number,
+): Omit<AnalysisResult, "generatedAt" | "provider" | "model"> {
   let text = raw.trim();
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fence) text = fence[1].trim();
@@ -326,6 +431,7 @@ export function parseAnalysis(raw: string): Omit<AnalysisResult, "generatedAt" |
     summary?: string;
     bullets?: unknown;
     risks?: unknown;
+    trade_plan?: unknown;
   };
   const stance =
     parsed.stance === "bullish" || parsed.stance === "bearish" ? parsed.stance : "neutral";
@@ -336,6 +442,7 @@ export function parseAnalysis(raw: string): Omit<AnalysisResult, "generatedAt" |
     summary: typeof parsed.summary === "string" ? parsed.summary : "",
     bullets: strings(parsed.bullets),
     risks: strings(parsed.risks),
+    plan: normalizePlan(parsed.trade_plan, lastPrice),
   };
 }
 
