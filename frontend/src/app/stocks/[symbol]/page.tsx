@@ -18,6 +18,7 @@ import { CHART_COLORS, drawPriceVolume, drawVolumePanel } from "@/lib/chart-draw
 import { useDefaultTimeframe } from "@/lib/favorites";
 import {
   aiSignal,
+  atr,
   correlation,
   ichimoku,
   macd,
@@ -107,7 +108,8 @@ export default function StockDetailPage({
     const rsiArr = rsi(closes);
     const sig = aiSignal(bars, ichi, macdRes, rsiArr, sr);
     const scorecard = computeScorecard(bars, { ichimoku: ichi, macd: macdRes, rsi: rsiArr, sr });
-    return { bars, ichi, sr, macdRes, rsiArr, sig, scorecard };
+    const atrArr = atr(bars);
+    return { bars, ichi, sr, macdRes, rsiArr, sig, scorecard, atr: atrArr[atrArr.length - 1] };
   }, [candles.data]);
 
   const m = daily.data ? metricsFromDaily(daily.data.bars) : null;
@@ -149,6 +151,7 @@ export default function StockDetailPage({
       macd: analysis.macdRes,
       ichimoku: analysis.ichi,
       sr: analysis.sr,
+      atr: analysis.atr,
       heuristic: analysis.sig,
       scorecard: analysis.scorecard,
       sessionVolume: volume.session,

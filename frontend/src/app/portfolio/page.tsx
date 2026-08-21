@@ -323,6 +323,14 @@ export default function PortfolioPage() {
 
   const gridCols = "90px 60px 1fr 1fr 1fr 1fr 90px 110px 68px";
 
+  function priceTitle(p: Position) {
+    if (p.price_as_of == null) return "No price data";
+    const when = new Date(p.price_as_of).toLocaleString();
+    return p.price_is_intraday
+      ? `Live 5m close at ${when} (~10 min delayed)`
+      : `Settled daily close for ${when}`;
+  }
+
   return (
     <div
       style={{
@@ -427,8 +435,13 @@ export default function PortfolioPage() {
                   <span className="text-right mono" style={{ fontSize: 13 }}>
                     {maskedPlain(hidden, fmtIdr(p.avg_price))}
                   </span>
-                  <span className="text-right mono" style={{ fontSize: 13 }}>
+                  <span
+                    className="text-right mono"
+                    style={{ fontSize: 13 }}
+                    title={priceTitle(p)}
+                  >
                     {p.last_close != null ? fmtIdr(p.last_close) : "—"}
+                    {p.price_is_intraday && <span className="caption"> ·live</span>}
                   </span>
                   <span className="text-right mono" style={{ fontSize: 13 }}>
                     {p.market_value != null ? maskedPlain(hidden, fmtIdr(p.market_value)) : "—"}

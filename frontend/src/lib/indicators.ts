@@ -217,6 +217,38 @@ export function stochastic(bars: Bar[], kPeriod = 14, dPeriod = 3): StochasticRe
 
 // ── ADX / DMI (Wilder smoothing) ────────────────────────────────────────────
 
+// ── Average True Range ──────────────────────────────────────────────────────
+
+/**
+ * Wilder-smoothed ATR. Gives a stop distance a volatility scale: a level a
+ * fraction of an ATR below price is inside the noise and will be taken out by
+ * ordinary movement, whichever structural line it sits on.
+ */
+export function atr(bars: Bar[], period = 14): (number | null)[] {
+  const n = bars.length;
+  const out: (number | null)[] = new Array(n).fill(null);
+  if (n < period + 1) return out;
+
+  let acc = 0;
+  let smoothed: number | null = null;
+  for (let i = 1; i < n; i++) {
+    const cur = bars[i];
+    const prev = bars[i - 1];
+    const tr = Math.max(cur.h - cur.l, Math.abs(cur.h - prev.c), Math.abs(cur.l - prev.c));
+    if (i <= period) {
+      acc += tr;
+      if (i === period) {
+        smoothed = acc / period;
+        out[i] = smoothed;
+      }
+      continue;
+    }
+    smoothed = ((smoothed as number) * (period - 1) + tr) / period;
+    out[i] = smoothed;
+  }
+  return out;
+}
+
 export interface AdxResult {
   adx: (number | null)[];
   plusDi: (number | null)[];

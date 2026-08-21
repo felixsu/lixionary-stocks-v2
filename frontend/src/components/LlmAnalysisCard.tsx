@@ -12,6 +12,7 @@ import { Badge } from "@/components/Badge";
 import {
   type AnalysisInput,
   type AnalysisResult,
+  type TradePlan,
   buildAnalysisMessages,
   cachedAnalysis,
   chat,
@@ -26,6 +27,70 @@ const STANCE_BADGE: Record<AnalysisResult["stance"], string> = {
   bearish: "badge-error",
   neutral: "badge-default",
 };
+
+const fmtLevel = (v: number) => v.toLocaleString("id-ID");
+
+/**
+ * Entry / stop / target, snapped to IDX ticks upstream so every number shown is
+ * one an order can actually be placed at.
+ */
+function TradePlanRow({ plan }: { plan: TradePlan }) {
+  const cells: { label: string; value: string; sub: string | null; color?: string }[] = [
+    {
+      label: "Entry",
+      value: plan.entry != null ? fmtLevel(plan.entry) : "—",
+      sub: plan.entry == null ? "no long setup" : null,
+    },
+    {
+      label: "Stop loss",
+      value: plan.stop != null ? fmtLevel(plan.stop) : "—",
+      sub: plan.riskPct != null ? `−${plan.riskPct.toFixed(1)}%` : null,
+      color: "var(--color-error)",
+    },
+    {
+      label: "Target",
+      value: plan.target != null ? fmtLevel(plan.target) : "—",
+      sub: plan.rewardPct != null ? `+${plan.rewardPct.toFixed(1)}%` : null,
+      color: "var(--color-success)",
+    },
+  ];
+
+  return (
+    <div className="well" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+        <span className="caption">Levels</span>
+        {plan.rr != null && (
+          <span className="caption" style={{ color: "var(--color-muted)" }}>
+            Reward:risk {plan.rr.toFixed(1)}:1
+          </span>
+        )}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+        {cells.map((c) => (
+          <div key={c.label} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span className="caption">{c.label}</span>
+            <span
+              className="mono"
+              style={{ fontSize: 15, color: c.value === "—" ? "var(--color-muted-soft)" : c.color }}
+            >
+              {c.value}
+            </span>
+            {c.sub && (
+              <span className="caption" style={{ color: "var(--color-muted-soft)" }}>
+                {c.sub}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+      {plan.basis && (
+        <span className="caption" style={{ color: "var(--color-muted)" }}>
+          {plan.basis}
+        </span>
+      )}
+    </div>
+  );
+}
 
 export function LlmAnalysisCard({
   symbol,
@@ -54,7 +119,7 @@ export function LlmAnalysisCard({
     setError(null);
     try {
       const raw = await chat(settings, buildAnalysisMessages(input));
-      const parsed = parseAnalysis(raw);
+      const parsed = parseAnalysis(raw, input.price);
       const full: AnalysisResult = {
         ...parsed,
         generatedAt: new Date().toISOString(),
@@ -101,6 +166,7 @@ export function LlmAnalysisCard({
           {result && (
             <>
               {result.summary && <p className="body-sm" style={{ margin: 0 }}>{result.summary}</p>}
+              {result.plan && <TradePlanRow plan={result.plan} />}
               {result.bullets.length > 0 && (
                 <ul
                   style={{

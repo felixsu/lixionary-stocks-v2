@@ -33,6 +33,10 @@ export interface Position {
   cost: number;
   last_close: number | null;
   prev_close: number | null;
+  /** When last_close was observed; null when no bar exists. */
+  price_as_of: string | null;
+  /** True when last_close came from the live 5m series rather than a settled daily bar. */
+  price_is_intraday: boolean;
   market_value: number | null;
   pnl: number | null;
   pnl_pct: number | null;
