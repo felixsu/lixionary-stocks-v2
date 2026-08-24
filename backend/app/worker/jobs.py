@@ -1,4 +1,4 @@
-"""Scheduled ingestion jobs.
+"""Scheduled ingestion and analytics jobs.
 
 Every job is safe to run at any time: ingestion is an idempotent upsert, so a
 duplicate or mistimed run costs a request, never data integrity.
@@ -171,3 +171,29 @@ async def recalc_coverage(db: AsyncIOMotorDatabase | None = None) -> dict[str, A
     count = await refresh_all_coverage(db)
     log.info("coverage.refreshed", symbols=count)
     return {"symbols_refreshed": count}
+
+
+async def run_pre_market_cycle(
+    db: AsyncIOMotorDatabase | None = None, *, force: bool = False
+) -> dict[str, Any]:
+    """08:00 WIB pre-market cycle: stockpicks daily analytics + portfolio recommendations."""
+    from app.services.analytics import run_stockpicks_analytics
+    from app.services.recommendations import run_portfolio_recommendations
+
+    db = db if db is not None else get_db()
+    analytics_res = await run_stockpicks_analytics(db, slot="pre_market", force=force)
+    rec_res = await run_portfolio_recommendations(db, slot="pre_market", force=force)
+    return {"analytics": analytics_res, "recommendations": rec_res}
+
+
+async def run_mid_day_cycle(
+    db: AsyncIOMotorDatabase | None = None, *, force: bool = False
+) -> dict[str, Any]:
+    """13:00 WIB mid-day cycle: stockpicks intraday analytics + portfolio recommendations."""
+    from app.services.analytics import run_stockpicks_analytics
+    from app.services.recommendations import run_portfolio_recommendations
+
+    db = db if db is not None else get_db()
+    analytics_res = await run_stockpicks_analytics(db, slot="mid_day", force=force)
+    rec_res = await run_portfolio_recommendations(db, slot="mid_day", force=force)
+    return {"analytics": analytics_res, "recommendations": rec_res}

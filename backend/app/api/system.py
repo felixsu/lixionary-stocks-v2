@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Query
+from pydantic import BaseModel, Field
 
 from app.core.logging import get_logger
 from app.db.mongo import get_db, mongo
@@ -17,10 +19,17 @@ from app.domain.calendar import (
 )
 from app.models.schemas import HealthOut, RunAccepted, RunOut, SessionOut
 from app.services.coverage import refresh_all_coverage
+from app.sources.llm import get_effective_llm_config, is_configured
 from app.sources.yahoo import yahoo
 
 log = get_logger(__name__)
 router = APIRouter(prefix="/api/system", tags=["system"])
+
+
+class LlmConfigIn(BaseModel):
+    provider: str = Field(default="", pattern="^(|gemini|minimax|openai)$")
+    model: str = Field(default="", max_length=100)
+    api_key: str = Field(default="", max_length=200)
 
 
 def _session_snapshot(now: datetime | None = None) -> SessionOut:
@@ -120,3 +129,36 @@ async def trigger_poll(background: BackgroundTasks):
 async def refresh_coverage_endpoint():
     count = await refresh_all_coverage(get_db())
     return {"symbols_refreshed": count}
+
+
+@router.get("/llm")
+async def get_llm_config():
+    cfg = await get_effective_llm_config(get_db())
+    has_key = bool(cfg.get("api_key"))
+    key_masked = f"{cfg['api_key'][:4]}...{cfg['api_key'][-4:]}" if len(cfg.get("api_key", "")) > 8 else ("***" if has_key else "")
+    return {
+        "provider": cfg.get("provider", ""),
+        "model": cfg.get("model", ""),
+        "has_api_key": has_key,
+        "api_key_masked": key_masked,
+        "is_configured": is_configured(cfg),
+    }
+
+
+@router.put("/llm")
+async def put_llm_config(payload: LlmConfigIn):
+    db = get_db()
+    update_data: dict[str, Any] = {
+        "provider": payload.provider.strip(),
+        "model": payload.model.strip(),
+        "updated_at": datetime.now(UTC),
+    }
+    if payload.api_key.strip():
+        update_data["api_key"] = payload.api_key.strip()
+
+    await db.settings.update_one(
+        {"_id": "llm_config"},
+        {"$set": update_data},
+        upsert=True,
+    )
+    return await get_llm_config()

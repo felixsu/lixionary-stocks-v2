@@ -1,18 +1,24 @@
 "use client";
 
-// AI trend read card, LLM-powered. States: disabled (no config) → idle →
-// loading → result | error. Results are cached per symbol+timeframe so
-// navigation doesn't burn API credit.
+// AI trend read card, LLM-powered.
+// Automatically displays scheduled backend analysis (8AM Pre-market / 1PM Mid-day)
+// with the option to regenerate on-demand.
 
 import { RefreshCw, Settings, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import useSWR from "swr";
 
 import { Badge } from "@/components/Badge";
 import {
+  type BackendAnalysis,
+  type TradePlan,
+  analysisKey,
+  fetcher,
+} from "@/lib/api";
+import {
   type AnalysisInput,
   type AnalysisResult,
-  type TradePlan,
   buildAnalysisMessages,
   cachedAnalysis,
   chat,
@@ -22,19 +28,24 @@ import {
   useLlmSettings,
 } from "@/lib/llm";
 
-const STANCE_BADGE: Record<AnalysisResult["stance"], string> = {
+const STANCE_BADGE: Record<string, string> = {
   bullish: "badge-success",
   bearish: "badge-error",
   neutral: "badge-default",
 };
 
+const SLOT_LABEL: Record<string, string> = {
+  pre_market: "Pre-market (08:00 WIB)",
+  mid_day: "Mid-day (13:00 WIB)",
+  ad_hoc: "On-demand",
+};
+
 const fmtLevel = (v: number) => v.toLocaleString("id-ID");
 
-/**
- * Entry / stop / target, snapped to IDX ticks upstream so every number shown is
- * one an order can actually be placed at.
- */
 function TradePlanRow({ plan }: { plan: TradePlan }) {
+  const riskPct = plan.risk_pct ?? null;
+  const rewardPct = plan.reward_pct ?? null;
+
   const cells: { label: string; value: string; sub: string | null; color?: string }[] = [
     {
       label: "Entry",
@@ -44,13 +55,13 @@ function TradePlanRow({ plan }: { plan: TradePlan }) {
     {
       label: "Stop loss",
       value: plan.stop != null ? fmtLevel(plan.stop) : "—",
-      sub: plan.riskPct != null ? `−${plan.riskPct.toFixed(1)}%` : null,
+      sub: riskPct != null ? `−${riskPct.toFixed(1)}%` : null,
       color: "var(--color-error)",
     },
     {
       label: "Target",
       value: plan.target != null ? fmtLevel(plan.target) : "—",
-      sub: plan.rewardPct != null ? `+${plan.rewardPct.toFixed(1)}%` : null,
+      sub: rewardPct != null ? `+${rewardPct.toFixed(1)}%` : null,
       color: "var(--color-success)",
     },
   ];
@@ -103,15 +114,32 @@ export function LlmAnalysisCard({
   input: AnalysisInput | null;
 }) {
   const { settings, configured } = useLlmSettings();
-  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [localResult, setLocalResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load the cached analysis for this symbol+timeframe on mount/switch.
+  // Fetch latest backend-generated analysis
+  const backendSwr = useSWR<BackendAnalysis>(
+    symbol ? analysisKey(symbol, timeframe) : null,
+    fetcher,
+    { revalidateOnFocus: false, shouldRetryOnError: false },
+  );
+
+  // Load any local client-cached analysis
   useEffect(() => {
-    setResult(cachedAnalysis(symbol, timeframe));
+    setLocalResult(cachedAnalysis(symbol, timeframe));
     setError(null);
   }, [symbol, timeframe]);
+
+  // Combine: prioritize freshly generated local result if newer than backend
+  const activeAnalysis: (AnalysisResult | BackendAnalysis) | null = useMemo(() => {
+    if (localResult && backendSwr.data) {
+      const localTime = new Date(localResult.generatedAt).getTime();
+      const backendTime = new Date(backendSwr.data.generated_at).getTime();
+      return localTime >= backendTime ? localResult : backendSwr.data;
+    }
+    return localResult || backendSwr.data || null;
+  }, [localResult, backendSwr.data]);
 
   async function generate() {
     if (!input || loading) return;
@@ -127,7 +155,7 @@ export function LlmAnalysisCard({
         model: settings.model,
       };
       storeAnalysis(symbol, timeframe, full);
-      setResult(full);
+      setLocalResult(full);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -135,21 +163,35 @@ export function LlmAnalysisCard({
     }
   }
 
+  const stance = activeAnalysis?.stance ?? "neutral";
+  const generatedAt =
+    "generated_at" in (activeAnalysis || {})
+      ? (activeAnalysis as BackendAnalysis).generated_at
+      : (activeAnalysis as AnalysisResult | null)?.generatedAt;
+
+  const slot = "slot" in (activeAnalysis || {}) ? (activeAnalysis as BackendAnalysis).slot : null;
+  const model = activeAnalysis?.model ?? "";
+
   return (
     <div className="card" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <Sparkles size={18} style={{ color: "var(--color-primary)" }} />
           <h5 style={{ margin: 0 }}>AI trend read</h5>
+          {slot && (
+            <span className="role-pill" style={{ fontSize: 11 }}>
+              {SLOT_LABEL[slot] ?? slot}
+            </span>
+          )}
         </div>
-        {result && (
-          <Badge className={STANCE_BADGE[result.stance]}>
-            {result.stance.charAt(0).toUpperCase() + result.stance.slice(1)}
+        {activeAnalysis && (
+          <Badge className={STANCE_BADGE[stance]}>
+            {stance.charAt(0).toUpperCase() + stance.slice(1)}
           </Badge>
         )}
       </div>
 
-      {!configured ? (
+      {!configured && !activeAnalysis ? (
         <div
           className="well"
           style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "space-between" }}
@@ -163,11 +205,15 @@ export function LlmAnalysisCard({
         </div>
       ) : (
         <>
-          {result && (
+          {activeAnalysis && (
             <>
-              {result.summary && <p className="body-sm" style={{ margin: 0 }}>{result.summary}</p>}
-              {result.plan && <TradePlanRow plan={result.plan} />}
-              {result.bullets.length > 0 && (
+              {activeAnalysis.summary && (
+                <p className="body-sm" style={{ margin: 0 }}>
+                  {activeAnalysis.summary}
+                </p>
+              )}
+              {activeAnalysis.plan && <TradePlanRow plan={activeAnalysis.plan} />}
+              {activeAnalysis.bullets && activeAnalysis.bullets.length > 0 && (
                 <ul
                   style={{
                     margin: 0,
@@ -177,17 +223,17 @@ export function LlmAnalysisCard({
                     gap: 6,
                   }}
                 >
-                  {result.bullets.map((b) => (
+                  {activeAnalysis.bullets.map((b) => (
                     <li key={b} className="body-sm">
                       {b}
                     </li>
                   ))}
                 </ul>
               )}
-              {result.risks.length > 0 && (
+              {activeAnalysis.risks && activeAnalysis.risks.length > 0 && (
                 <div className="well" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   <span className="caption">Risks</span>
-                  {result.risks.map((r) => (
+                  {activeAnalysis.risks.map((r) => (
                     <span key={r} className="body-sm">
                       {r}
                     </span>
@@ -203,19 +249,21 @@ export function LlmAnalysisCard({
             </span>
           )}
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <button
-              className="btn btn-primary btn-sm"
-              disabled={loading || !input}
-              onClick={generate}
-            >
-              <RefreshCw size={14} className={loading ? "lx-spin" : undefined} />
-              {loading ? "Analysing…" : result ? "Regenerate" : "Generate analysis"}
-            </button>
-            {result && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            {configured && (
+              <button
+                className="btn btn-primary btn-sm"
+                disabled={loading || !input}
+                onClick={generate}
+              >
+                <RefreshCw size={14} className={loading ? "lx-spin" : undefined} />
+                {loading ? "Analysing…" : activeAnalysis ? "Regenerate" : "Generate analysis"}
+              </button>
+            )}
+            {generatedAt && (
               <span className="caption" style={{ color: "var(--color-muted-soft)" }}>
-                {providerById(result.provider)?.label ?? result.provider} · {result.model} ·{" "}
-                {new Date(result.generatedAt).toLocaleString()}
+                {providerById(activeAnalysis?.model)?.label ?? model} ·{" "}
+                {new Date(generatedAt).toLocaleString()}
               </span>
             )}
           </div>

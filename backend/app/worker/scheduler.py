@@ -11,7 +11,9 @@ from app.worker.jobs import (
     poll_all,
     recalc_coverage,
     refresh_hourly,
+    run_mid_day_cycle,
     run_news_cycle,
+    run_pre_market_cycle,
 )
 
 log = get_logger(__name__)
@@ -42,6 +44,26 @@ def build_scheduler() -> AsyncIOScheduler:
         CronTrigger(minute="2,32", timezone=settings.app_timezone),
         id="refresh_1h",
         name="1h refresh (session-gated)",
+        replace_existing=True,
+        **common,
+    )
+
+    # 08:00 WIB Mon–Fri: Pre-market daily stockpicks analytics + portfolio recommendations
+    scheduler.add_job(
+        run_pre_market_cycle,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=0, timezone=settings.app_timezone),
+        id="pre_market_cycle",
+        name="08:00 WIB Pre-market AI analytics & recommendations",
+        replace_existing=True,
+        **common,
+    )
+
+    # 13:00 WIB Mon–Fri: Mid-day intraday stockpicks analytics + portfolio recommendations
+    scheduler.add_job(
+        run_mid_day_cycle,
+        CronTrigger(day_of_week="mon-fri", hour=13, minute=0, timezone=settings.app_timezone),
+        id="mid_day_cycle",
+        name="13:00 WIB Mid-day AI analytics & recommendations",
         replace_existing=True,
         **common,
     )

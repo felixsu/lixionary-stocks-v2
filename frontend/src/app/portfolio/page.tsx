@@ -266,11 +266,18 @@ export default function PortfolioPage() {
 
   const [recBusy, setRecBusy] = useState(false);
   const [recError, setRecError] = useState<string | null>(null);
-  const [portfolioNote, setPortfolioNote] = useState<string | null>(null);
+  const [localNote, setLocalNote] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [editing, setEditing] = useState<Position | null>(null);
   const { hidden, toggle: toggleHidden } = useHideAmounts();
 
+  const noteSwr = useSWR<{ note: string | null; model?: string; generated_at?: string }>(
+    "/api/portfolio/note",
+    fetcher,
+    { refreshInterval: REFRESH_MS },
+  );
+
+  const activeNote = localNote || noteSwr.data?.note || null;
   const data = portfolio.data;
 
   async function getRecommendations() {
@@ -302,7 +309,7 @@ export default function PortfolioPage() {
             .catch(() => undefined),
         ),
       );
-      setPortfolioNote(response.portfolio_note || null);
+      setLocalNote(response.portfolio_note || null);
       await portfolio.mutate();
     } catch (err) {
       setRecError(err instanceof Error ? err.message : String(err));
@@ -496,11 +503,11 @@ export default function PortfolioPage() {
               Recommendations failed: {recError}
             </span>
           )}
-          {portfolioNote && (
+          {activeNote && (
             <div className="well">
               <span className="caption">Portfolio note</span>
               <p className="body-sm" style={{ margin: "4px 0 0 0" }}>
-                {portfolioNote}
+                {activeNote}
               </p>
             </div>
           )}

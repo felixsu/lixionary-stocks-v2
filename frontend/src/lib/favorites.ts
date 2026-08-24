@@ -1,12 +1,11 @@
 "use client";
 
-// Dashboard favorites + default-timeframe preference, persisted in localStorage.
-// Favorites are a client-side subset of the backend's subscribed symbols —
-// unfavoriting never touches the backend, so polling and 5m history
-// accumulation continue regardless of what's shown on the dashboard.
+// Dashboard favorites + default-timeframe preference, persisted in localStorage
+// and synchronized to the backend for scheduled AI analytics.
 
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 
+import { api } from "./api";
 import { DEFAULT_TIMEFRAME, type TimeframeId, isTimeframeId } from "./timeframes";
 
 export const MAX_FAVORITES = 10;
@@ -29,8 +28,6 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-// useSyncExternalStore requires a referentially-stable snapshot, so cache the
-// parsed array against its raw string.
 let cachedRaw: string | null = null;
 let cachedList: string[] = [];
 
@@ -49,22 +46,55 @@ function readFavorites(): string[] {
   return cachedList;
 }
 
+let hasInitializedBackendSync = false;
+
+function syncToBackend(symbols: string[]) {
+  api.putFavorites(symbols).catch(() => {
+    /* silent background sync */
+  });
+}
+
 const EMPTY: string[] = [];
 
 export function useFavorites() {
   const favorites = useSyncExternalStore(subscribe, readFavorites, () => EMPTY);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || hasInitializedBackendSync) return;
+    hasInitializedBackendSync = true;
+    const current = readFavorites();
+    if (current.length > 0) {
+      syncToBackend(current);
+    } else {
+      api
+        .getFavorites()
+        .then((res) => {
+          if (res.symbols && res.symbols.length > 0 && readFavorites().length === 0) {
+            localStorage.setItem(FAVORITES_KEY, JSON.stringify(res.symbols));
+            emit();
+          }
+        })
+        .catch(() => {});
+    }
+  }, []);
+
   const add = useCallback((code: string) => {
     const current = readFavorites();
-    if (current.includes(code) || current.length >= MAX_FAVORITES) return;
-    localStorage.setItem(FAVORITES_KEY, JSON.stringify([...current, code]));
+    const clean = code.trim().toUpperCase();
+    if (current.includes(clean) || current.length >= MAX_FAVORITES) return;
+    const next = [...current, clean];
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
     emit();
+    syncToBackend(next);
   }, []);
 
   const remove = useCallback((code: string) => {
     const current = readFavorites();
-    localStorage.setItem(FAVORITES_KEY, JSON.stringify(current.filter((c) => c !== code)));
+    const clean = code.trim().toUpperCase();
+    const next = current.filter((c) => c !== clean);
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
     emit();
+    syncToBackend(next);
   }, []);
 
   return { favorites, add, remove };
