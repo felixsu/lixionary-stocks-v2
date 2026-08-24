@@ -143,7 +143,7 @@ function LlmSettingsCard() {
         </div>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <button
           className="btn btn-secondary btn-sm"
           disabled={!configured || testState === "testing"}
@@ -151,6 +151,27 @@ function LlmSettingsCard() {
         >
           {testState === "testing" ? "Testing…" : "Test connection"}
         </button>
+        {configured && (
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={async () => {
+              try {
+                await api.putBackendLlm({
+                  provider: settings.provider,
+                  model: settings.model,
+                  api_key: settings.apiKey,
+                });
+                setTestState("ok");
+                setTestMessage("Saved to backend worker.");
+              } catch (err) {
+                setTestState("failed");
+                setTestMessage(`Save failed: ${err instanceof Error ? err.message : err}`);
+              }
+            }}
+          >
+            Save to backend worker
+          </button>
+        )}
         {testMessage && (
           <span
             className="caption"

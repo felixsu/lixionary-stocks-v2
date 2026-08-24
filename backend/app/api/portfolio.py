@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import uuid
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.logging import get_logger
 from app.db.mongo import get_db
+from app.models.schemas import RunAccepted
 from app.services import portfolio as svc
+from app.services.recommendations import run_portfolio_recommendations
 
+log = get_logger(__name__)
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
 
 
@@ -36,9 +41,37 @@ class RecommendationIn(BaseModel):
         return [r[:300] for r in v]
 
 
+class RecRunRequest(BaseModel):
+    slot: str = Field(default="ad_hoc", pattern="^(pre_market|mid_day|ad_hoc)$")
+
+
 @router.get("")
 async def get_portfolio():
     return await svc.list_positions(get_db())
+
+
+@router.get("/note")
+async def get_portfolio_note():
+    doc = await get_db().settings.find_one({"_id": "portfolio_note"}, {"_id": 0})
+    return doc or {"note": None}
+
+
+async def _run_recommendations_task(run_id: str, slot: str) -> None:
+    try:
+        await run_portfolio_recommendations(get_db(), slot=slot, force=True)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("recommendations.manual_run_failed", run_id=run_id, slot=slot, error=str(exc))
+
+
+@router.post("/recommendations/run", response_model=RunAccepted, status_code=202)
+async def trigger_recommendations_run(
+    background: BackgroundTasks, payload: RecRunRequest | None = None
+):
+    """Trigger an on-demand portfolio recommendations refresh."""
+    run_id = uuid.uuid4().hex
+    slot = payload.slot if payload else "ad_hoc"
+    background.add_task(_run_recommendations_task, run_id, slot)
+    return RunAccepted(run_id=run_id, detail=f"recommendations run started for slot {slot}")
 
 
 # Must be declared BEFORE the /{symbol} routes, or "cash" is captured as a

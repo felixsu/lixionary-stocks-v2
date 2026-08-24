@@ -98,7 +98,87 @@ export const api = {
       `/api/symbols/${encodeSymbol(symbol)}`,
       { method: "DELETE" },
     ),
+
+  getFavorites: () => request<{ symbols: string[] }>("/api/analytics/favorites"),
+
+  putFavorites: (symbols: string[]) =>
+    request<{ symbols: string[] }>("/api/analytics/favorites", {
+      method: "PUT",
+      body: JSON.stringify({ symbols }),
+    }),
+
+  getLatestAnalysis: (symbol: string, timeframe?: string, slot?: string) => {
+    const params = new URLSearchParams();
+    if (timeframe) params.set("timeframe", timeframe);
+    if (slot) params.set("slot", slot);
+    const qs = params.toString();
+    return request<BackendAnalysis>(`/api/analytics/${encodeSymbol(symbol)}${qs ? `?${qs}` : ""}`);
+  },
+
+  runAnalytics: (slot: string = "ad_hoc") =>
+    request<{ run_id: string; status: string }>("/api/analytics/run", {
+      method: "POST",
+      body: JSON.stringify({ slot }),
+    }),
+
+  getPortfolioNote: () => request<{ note: string | null; model?: string; generated_at?: string }>("/api/portfolio/note"),
+
+  runRecommendations: (slot: string = "ad_hoc") =>
+    request<{ run_id: string; status: string }>("/api/portfolio/recommendations/run", {
+      method: "POST",
+      body: JSON.stringify({ slot }),
+    }),
+
+  getBackendLlm: () =>
+    request<{
+      provider: string;
+      model: string;
+      has_api_key: boolean;
+      api_key_masked: string;
+      is_configured: boolean;
+    }>("/api/system/llm"),
+
+  putBackendLlm: (config: { provider: string; model: string; api_key?: string }) =>
+    request<{
+      provider: string;
+      model: string;
+      has_api_key: boolean;
+      is_configured: boolean;
+    }>("/api/system/llm", {
+      method: "PUT",
+      body: JSON.stringify(config),
+    }),
 };
+
+// ── Backend Analysis ────────────────────────────────────────────────────────
+
+export interface TradePlan {
+  entry: number | null;
+  stop: number | null;
+  target: number | null;
+  basis: string;
+  risk_pct?: number | null;
+  reward_pct?: number | null;
+  rr?: number | null;
+}
+
+export interface BackendAnalysis {
+  symbol: string;
+  timeframe: string;
+  slot: "pre_market" | "mid_day" | "ad_hoc";
+  price: number;
+  stance: "bullish" | "bearish" | "neutral";
+  summary: string;
+  bullets: string[];
+  risks: string[];
+  plan: TradePlan | null;
+  model: string;
+  generated_at: string;
+}
+
+export function analysisKey(symbol: string, timeframe?: string): string {
+  return `/api/analytics/${encodeSymbol(symbol)}${timeframe ? `?timeframe=${timeframe}` : ""}`;
+}
 
 // ── News ────────────────────────────────────────────────────────────────────
 
