@@ -1,7 +1,20 @@
 "use client";
 
-import { Check, CheckCircle2, Eye, EyeOff, HelpCircle, Plus, Send, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+  Check,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  HelpCircle,
+  ListFilter,
+  Plus,
+  Send,
+  SlidersHorizontal,
+  Sparkles,
+  X,
+} from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import useSWR from "swr";
 
 import { Badge } from "@/components/Badge";
@@ -377,9 +390,35 @@ function TelegramSettingsCard() {
   );
 }
 
-export default function SettingsPage() {
+type SettingsTab = "watchlist" | "ai" | "telegram" | "general";
+
+function SettingsContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get("tab") as SettingsTab | null;
+  const initialTab: SettingsTab =
+    tabParam && ["watchlist", "ai", "telegram", "general"].includes(tabParam)
+      ? tabParam
+      : "watchlist";
+
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+
+  useEffect(() => {
+    const current = searchParams.get("tab") as SettingsTab | null;
+    if (current && ["watchlist", "ai", "telegram", "general"].includes(current)) {
+      setActiveTab(current);
+    }
+  }, [searchParams]);
+
+  const handleTabChange = (tab: SettingsTab) => {
+    setActiveTab(tab);
+    router.replace(`/settings?tab=${tab}`, { scroll: false });
+  };
+
   const { favorites, add, remove } = useFavorites();
   const { defaultTimeframe, setDefaultTimeframe } = useDefaultTimeframe();
+  const { configured: llmConfigured } = useLlmSettings();
+  const { data: tgConfig } = useSWR<TelegramConfig>("/api/notifications/telegram", fetcher);
 
   const symbolsSwr = useSWR<SymbolOut[]>("/api/symbols", fetcher);
   const symbols = symbolsSwr.data;
@@ -430,224 +469,359 @@ export default function SettingsPage() {
     }
   }
 
+  const tabs: {
+    id: SettingsTab;
+    label: string;
+    icon: React.ComponentType<{ size?: number; style?: React.CSSProperties }>;
+    badge?: React.ReactNode;
+  }[] = [
+    {
+      id: "watchlist",
+      label: "Watchlist & Data",
+      icon: ListFilter,
+      badge: (
+        <span
+          className="role-pill"
+          style={{
+            fontSize: 11,
+            padding: "1px 6px",
+            background: activeTab === "watchlist" ? "var(--color-surface-cream-strong)" : undefined,
+          }}
+        >
+          {favorites.length}/{MAX_FAVORITES}
+        </span>
+      ),
+    },
+    {
+      id: "ai",
+      label: "AI Analysis",
+      icon: Sparkles,
+      badge: (
+        <span
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: 9999,
+            background: llmConfigured ? "var(--color-success)" : "var(--color-muted-soft)",
+            display: "inline-block",
+          }}
+          title={llmConfigured ? "AI configured" : "AI not configured"}
+        />
+      ),
+    },
+    {
+      id: "telegram",
+      label: "Telegram",
+      icon: Send,
+      badge: (
+        <span
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: 9999,
+            background: tgConfig?.configured ? "var(--color-success)" : "var(--color-muted-soft)",
+            display: "inline-block",
+          }}
+          title={tgConfig?.configured ? "Telegram connected" : "Telegram not configured"}
+        />
+      ),
+    },
+    {
+      id: "general",
+      label: "General",
+      icon: SlidersHorizontal,
+    },
+  ];
+
   return (
     <div
       style={{
         maxWidth: 760,
         margin: "0 auto",
-        padding: 32,
+        padding: "32px 16px",
         display: "flex",
         flexDirection: "column",
-        gap: 24,
+        gap: 20,
       }}
     >
       <div>
-        <h3 style={{ margin: "0 0 4px 0" }}>Watchlist</h3>
+        <h3 style={{ margin: "0 0 4px 0" }}>Settings</h3>
         <p className="body-sm" style={{ margin: 0, color: "var(--color-muted)" }}>
-          Choose up to {MAX_FAVORITES} IHSG stocks to show on your dashboard.
+          Manage your watchlists, AI integrations, alerts, and preferences.
         </p>
       </div>
 
-      {/* ── Dashboard favorites (client-side only) ─────────────────────── */}
-      <div className="card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span className="field-label" style={{ margin: 0 }}>
-            Favorites ({favorites.length}/{MAX_FAVORITES})
-          </span>
-        </div>
-
-        {favorites.length === 0 && (
-          <span className="body-sm" style={{ color: "var(--color-muted)" }}>
-            Nothing here yet — add a stock below.
-          </span>
-        )}
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          {favorites.map((code) => (
-            <div
-              key={code}
+      {/* Tab Navigation */}
+      <div
+        style={{
+          display: "flex",
+          gap: 6,
+          borderBottom: "1px solid var(--color-hairline)",
+          paddingBottom: 0,
+          overflowX: "auto",
+        }}
+      >
+        {tabs.map((t) => {
+          const active = t.id === activeTab;
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => handleTabChange(t.id)}
               style={{
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "space-between",
-                padding: "12px 4px",
-                borderBottom: "1px solid var(--color-hairline-soft)",
+                gap: 8,
+                padding: "10px 14px",
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+                fontSize: 13,
+                fontWeight: active ? 600 : 400,
+                color: active ? "var(--color-ink)" : "var(--color-muted)",
+                borderBottom: active ? "2px solid var(--color-primary)" : "2px solid transparent",
+                marginBottom: -1,
+                whiteSpace: "nowrap",
+                transition: "all 0.15s ease",
               }}
             >
-              <div>
-                <span style={{ fontWeight: 500, color: "var(--color-ink)", fontSize: 14 }}>
-                  {code}
-                </span>
-                <span className="body-sm" style={{ color: "var(--color-muted)", marginLeft: 8 }}>
-                  {nameOf(code)}
-                </span>
-              </div>
-              <button
-                className="btn-icon"
-                style={{ width: 30, height: 30 }}
-                title="Remove from dashboard"
-                onClick={() => remove(code)}
-              >
-                <X size={14} />
-              </button>
-            </div>
-          ))}
-        </div>
-
-        {favorites.length < MAX_FAVORITES ? (
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <select
-              className="select"
-              style={{ flex: 1 }}
-              value=""
-              onChange={(e) => {
-                if (e.target.value) add(e.target.value);
-              }}
-            >
-              <option value="" disabled>
-                Add a stock to your watchlist…
-              </option>
-              {addable.map((s) => (
-                <option key={s.symbol} value={s.symbol}>
-                  {s.symbol} — {s.name ?? s.symbol}
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : (
-          <span className="caption" style={{ color: "var(--color-muted-soft)" }}>
-            Maximum of {MAX_FAVORITES} favorites reached. Remove one to add another.
-          </span>
-        )}
-        <span className="caption" style={{ color: "var(--color-muted-soft)" }}>
-          Favorites only affect what your dashboard shows — data keeps collecting for every
-          subscribed symbol below.
-        </span>
+              <Icon
+                size={15}
+                style={{ color: active ? "var(--color-primary)" : "var(--color-muted)" }}
+              />
+              <span>{t.label}</span>
+              {t.badge}
+            </button>
+          );
+        })}
       </div>
 
-      {/* ── Backend subscriptions (polling + history accumulation) ─────── */}
-      <div className="card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div>
-          <span className="field-label" style={{ margin: 0 }}>
-            Data subscriptions
-          </span>
-          <p className="body-sm" style={{ margin: "4px 0 0 0", color: "var(--color-muted)" }}>
-            Symbols the backend polls from Yahoo Finance every 5 minutes. Unsubscribing stops
-            polling and 5-minute history accumulation — intraday history older than 60 days can
-            never be refetched.
-          </p>
-        </div>
+      {/* ── Watchlist & Data Tab ────────────────────────────────────── */}
+      {activeTab === "watchlist" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          {/* Dashboard favorites */}
+          <div className="card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span className="field-label" style={{ margin: 0 }}>
+                Favorites ({favorites.length}/{MAX_FAVORITES})
+              </span>
+            </div>
 
-        {symbolsSwr.error ? (
-          <ErrorCard
-            message="Could not load subscriptions."
-            onRetry={() => symbolsSwr.mutate()}
-          />
-        ) : !symbols ? (
-          <Skeleton height={120} />
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            {symbols.map((s) => (
-              <div
-                key={s.symbol}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "12px 4px",
-                  borderBottom: "1px solid var(--color-hairline-soft)",
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <span style={{ fontWeight: 500, color: "var(--color-ink)", fontSize: 14 }}>
-                    {s.symbol}
-                  </span>
-                  <span className="body-sm" style={{ color: "var(--color-muted)", marginLeft: 8 }}>
-                    {s.name ?? ""}
-                  </span>
-                  {s.last_error && (
-                    <span className="caption" style={{ color: "var(--color-error)", marginLeft: 8 }}>
-                      {s.last_error}
+            {favorites.length === 0 && (
+              <span className="body-sm" style={{ color: "var(--color-muted)" }}>
+                Nothing here yet — add a stock below.
+              </span>
+            )}
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {favorites.map((code) => (
+                <div
+                  key={code}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "12px 4px",
+                    borderBottom: "1px solid var(--color-hairline-soft)",
+                  }}
+                >
+                  <div>
+                    <span style={{ fontWeight: 500, color: "var(--color-ink)", fontSize: 14 }}>
+                      {code}
                     </span>
-                  )}
-                </div>
-                {confirmingRemove === s.symbol ? (
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <button
-                      className="btn btn-danger-outline btn-sm"
-                      disabled={removing}
-                      onClick={() => unsubscribe(s.symbol)}
-                    >
-                      {removing ? "Removing…" : "Stop collecting data"}
-                    </button>
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      disabled={removing}
-                      onClick={() => setConfirmingRemove(null)}
-                    >
-                      Cancel
-                    </button>
+                    <span className="body-sm" style={{ color: "var(--color-muted)", marginLeft: 8 }}>
+                      {nameOf(code)}
+                    </span>
                   </div>
-                ) : (
                   <button
                     className="btn-icon"
                     style={{ width: 30, height: 30 }}
-                    title="Unsubscribe (stops data collection)"
-                    onClick={() => setConfirmingRemove(s.symbol)}
+                    title="Remove from dashboard"
+                    onClick={() => remove(code)}
                   >
                     <X size={14} />
                   </button>
-                )}
+                </div>
+              ))}
+            </div>
+
+            {favorites.length < MAX_FAVORITES ? (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <select
+                  className="select"
+                  style={{ flex: 1 }}
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) add(e.target.value);
+                  }}
+                >
+                  <option value="" disabled>
+                    Add a stock to your watchlist…
+                  </option>
+                  {addable.map((s) => (
+                    <option key={s.symbol} value={s.symbol}>
+                      {s.symbol} — {s.name ?? s.symbol}
+                    </option>
+                  ))}
+                </select>
               </div>
-            ))}
+            ) : (
+              <span className="caption" style={{ color: "var(--color-muted-soft)" }}>
+                Maximum of {MAX_FAVORITES} favorites reached. Remove one to add another.
+              </span>
+            )}
+            <span className="caption" style={{ color: "var(--color-muted-soft)" }}>
+              Favorites only affect what your dashboard shows — data keeps collecting for every
+              subscribed symbol below.
+            </span>
           </div>
-        )}
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            className="input"
-            style={{ flex: 1 }}
-            placeholder="Subscribe a new IDX ticker, e.g. BBNI"
-            value={newTicker}
-            disabled={subscribing}
-            onChange={(e) => {
-              setNewTicker(e.target.value);
-              setSubscribeError(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") subscribe();
-            }}
-          />
-          <button
-            className="btn btn-primary"
-            disabled={subscribing || !newTicker.trim()}
-            onClick={subscribe}
-          >
-            <Plus size={16} /> {subscribing ? "Validating…" : "Subscribe"}
-          </button>
+          {/* Backend data subscriptions */}
+          <div className="card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div>
+              <span className="field-label" style={{ margin: 0 }}>
+                Data subscriptions
+              </span>
+              <p className="body-sm" style={{ margin: "4px 0 0 0", color: "var(--color-muted)" }}>
+                Symbols the backend polls from Yahoo Finance every 5 minutes. Unsubscribing stops
+                polling and 5-minute history accumulation — intraday history older than 60 days can
+                never be refetched.
+              </p>
+            </div>
+
+            {symbolsSwr.error ? (
+              <ErrorCard
+                message="Could not load subscriptions."
+                onRetry={() => symbolsSwr.mutate()}
+              />
+            ) : !symbols ? (
+              <Skeleton height={120} />
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                {symbols.map((s) => (
+                  <div
+                    key={s.symbol}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "12px 4px",
+                      borderBottom: "1px solid var(--color-hairline-soft)",
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <span style={{ fontWeight: 500, color: "var(--color-ink)", fontSize: 14 }}>
+                        {s.symbol}
+                      </span>
+                      <span className="body-sm" style={{ color: "var(--color-muted)", marginLeft: 8 }}>
+                        {s.name ?? ""}
+                      </span>
+                      {s.last_error && (
+                        <span className="caption" style={{ color: "var(--color-error)", marginLeft: 8 }}>
+                          {s.last_error}
+                        </span>
+                      )}
+                    </div>
+                    {confirmingRemove === s.symbol ? (
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <button
+                          className="btn btn-danger-outline btn-sm"
+                          disabled={removing}
+                          onClick={() => unsubscribe(s.symbol)}
+                        >
+                          {removing ? "Removing…" : "Stop collecting data"}
+                        </button>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          disabled={removing}
+                          onClick={() => setConfirmingRemove(null)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        className="btn-icon"
+                        style={{ width: 30, height: 30 }}
+                        title="Unsubscribe (stops data collection)"
+                        onClick={() => setConfirmingRemove(s.symbol)}
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                className="input"
+                style={{ flex: 1 }}
+                placeholder="Subscribe a new IDX ticker, e.g. BBNI"
+                value={newTicker}
+                disabled={subscribing}
+                onChange={(e) => {
+                  setNewTicker(e.target.value);
+                  setSubscribeError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") subscribe();
+                }}
+              />
+              <button
+                className="btn btn-primary"
+                disabled={subscribing || !newTicker.trim()}
+                onClick={subscribe}
+              >
+                <Plus size={16} /> {subscribing ? "Validating…" : "Subscribe"}
+              </button>
+            </div>
+            {subscribeError && (
+              <span className="caption" style={{ color: "var(--color-error)" }}>
+                {subscribeError}
+              </span>
+            )}
+          </div>
         </div>
-        {subscribeError && (
-          <span className="caption" style={{ color: "var(--color-error)" }}>
-            {subscribeError}
-          </span>
-        )}
-      </div>
+      )}
 
-      {/* ── LLM configuration ──────────────────────────────────────────── */}
-      <LlmSettingsCard />
+      {/* ── AI Analysis Tab ─────────────────────────────────────────── */}
+      {activeTab === "ai" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <LlmSettingsCard />
+        </div>
+      )}
 
-      {/* ── Telegram Notifications ─────────────────────────────────────── */}
-      <TelegramSettingsCard />
+      {/* ── Telegram Tab ────────────────────────────────────────────── */}
+      {activeTab === "telegram" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <TelegramSettingsCard />
+        </div>
+      )}
 
-      {/* ── Default timeframe ──────────────────────────────────────────── */}
-      <div className="card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <span className="field-label" style={{ margin: 0 }}>
-          Default timeframe
-        </span>
-        <p className="body-sm" style={{ margin: 0, color: "var(--color-muted)" }}>
-          Used when the dashboard loads.
-        </p>
-        <TimeframeSwitcher value={defaultTimeframe} onChange={setDefaultTimeframe} />
-      </div>
+      {/* ── General Preferences Tab ─────────────────────────────────── */}
+      {activeTab === "general" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <div className="card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <span className="field-label" style={{ margin: 0 }}>
+              Default timeframe
+            </span>
+            <p className="body-sm" style={{ margin: 0, color: "var(--color-muted)" }}>
+              Used when the dashboard loads.
+            </p>
+            <TimeframeSwitcher value={defaultTimeframe} onChange={setDefaultTimeframe} />
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<Skeleton height={200} />}>
+      <SettingsContent />
+    </Suspense>
   );
 }

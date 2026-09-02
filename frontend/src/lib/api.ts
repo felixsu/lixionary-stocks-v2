@@ -115,10 +115,10 @@ export const api = {
     return request<BackendAnalysis>(`/api/analytics/${encodeSymbol(symbol)}${qs ? `?${qs}` : ""}`);
   },
 
-  runAnalytics: (slot: string = "ad_hoc") =>
-    request<{ run_id: string; status: string }>("/api/analytics/run", {
+  runAnalytics: (slot: string = "ad_hoc", timeframe: "both" | "1d" | "1h" = "both") =>
+    request<{ run_id: string; detail?: string; status?: string }>("/api/analytics/run", {
       method: "POST",
-      body: JSON.stringify({ slot }),
+      body: JSON.stringify({ slot, timeframe }),
     }),
 
   getPortfolioNote: () => request<{ note: string | null; model?: string; generated_at?: string }>("/api/portfolio/note"),

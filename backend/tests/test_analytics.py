@@ -138,3 +138,34 @@ async def test_run_post_market_cycle():
         mock_analytics.assert_awaited_once_with(mock_db, slot="post_market", force=True)
         mock_rec.assert_awaited_once_with(mock_db, slot="post_market", force=True)
 
+
+@pytest.mark.asyncio
+async def test_run_stockpicks_analytics_both_timeframes():
+    from app.domain.timeframes import Timeframe
+    from app.services.analytics import run_stockpicks_analytics
+
+    mock_db = MagicMock()
+    mock_db.ingest_runs.insert_one = AsyncMock()
+
+    with patch("app.services.analytics.get_stockpicks", new_callable=AsyncMock) as mock_picks, \
+         patch("app.services.analytics.llm.get_effective_llm_config", new_callable=AsyncMock) as mock_cfg, \
+         patch("app.services.analytics.llm.is_configured", return_value=True), \
+         patch("app.services.analytics.analyze_symbol", new_callable=AsyncMock) as mock_analyze:
+
+        mock_picks.return_value = ["BBCA", "BBRI"]
+        mock_analyze.return_value = {"symbol": "TEST", "stance": "bullish"}
+
+        res = await run_stockpicks_analytics(
+            mock_db, slot="ad_hoc", force=True, timeframe_choice="both"
+        )
+
+        assert res["status"] == "ok"
+        # 2 symbols * 2 timeframes (1d and 1h) = 4 analysis calls
+        assert mock_analyze.await_count == 4
+
+        # Verify timeframes used
+        calls = mock_analyze.await_args_list
+        tfs_called = [c[0][2] for c in calls]
+        assert Timeframe.D1 in tfs_called
+        assert Timeframe.H1 in tfs_called
+

@@ -200,7 +200,7 @@ export function LlmAnalysisCard({
           <span className="body-sm" style={{ color: "var(--color-muted)" }}>
             AI analysis is disabled — missing LLM configuration.
           </span>
-          <Link href="/settings" className="btn btn-secondary btn-sm" style={{ textDecoration: "none" }}>
+          <Link href="/settings?tab=ai" className="btn btn-secondary btn-sm" style={{ textDecoration: "none" }}>
             <Settings size={14} /> Configure
           </Link>
         </div>
