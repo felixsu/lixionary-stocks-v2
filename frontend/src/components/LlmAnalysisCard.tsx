@@ -37,6 +37,7 @@ const STANCE_BADGE: Record<string, string> = {
 const SLOT_LABEL: Record<string, string> = {
   pre_market: "Pre-market (08:00 WIB)",
   mid_day: "Mid-day (13:00 WIB)",
+  post_market: "Post-market (17:00 WIB)",
   ad_hoc: "On-demand",
 };
 

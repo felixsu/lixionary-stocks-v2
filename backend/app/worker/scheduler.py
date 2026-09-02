@@ -6,6 +6,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.worker.jobs import (
+    check_price_alerts_job,
     close_of_day,
     nightly_daily,
     poll_all,
@@ -13,6 +14,7 @@ from app.worker.jobs import (
     refresh_hourly,
     run_mid_day_cycle,
     run_news_cycle,
+    run_post_market_cycle,
     run_pre_market_cycle,
 )
 
@@ -35,6 +37,16 @@ def build_scheduler() -> AsyncIOScheduler:
         CronTrigger(minute="*/5", timezone=settings.app_timezone),
         id="poll_5m",
         name="5m poll (session-gated)",
+        replace_existing=True,
+        **common,
+    )
+
+    # 5m price alert check (evaluates watchlist prices against entry/stop/target levels)
+    scheduler.add_job(
+        check_price_alerts_job,
+        CronTrigger(minute="1,6,11,16,21,26,31,36,41,46,51,56", timezone=settings.app_timezone),
+        id="check_price_alerts",
+        name="Watchlist price alerts evaluation",
         replace_existing=True,
         **common,
     )
@@ -74,6 +86,16 @@ def build_scheduler() -> AsyncIOScheduler:
         CronTrigger(day_of_week="mon-fri", hour=16, minute=30, timezone=settings.app_timezone),
         id="close_of_day",
         name="Close of day settle",
+        replace_existing=True,
+        **common,
+    )
+
+    # 17:00 WIB Mon–Fri: Post-market daily stockpicks analytics + portfolio recommendations
+    scheduler.add_job(
+        run_post_market_cycle,
+        CronTrigger(day_of_week="mon-fri", hour=17, minute=0, timezone=settings.app_timezone),
+        id="post_market_cycle",
+        name="17:00 WIB Post-market AI analytics & recommendations",
         replace_existing=True,
         **common,
     )

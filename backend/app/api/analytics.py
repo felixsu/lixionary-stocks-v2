@@ -21,7 +21,7 @@ class FavoritesIn(BaseModel):
 
 
 class RunRequest(BaseModel):
-    slot: str = Field(default="ad_hoc", pattern="^(pre_market|mid_day|ad_hoc)$")
+    slot: str = Field(default="ad_hoc", pattern="^(pre_market|mid_day|post_market|ad_hoc)$")
 
 
 @router.get("/favorites")

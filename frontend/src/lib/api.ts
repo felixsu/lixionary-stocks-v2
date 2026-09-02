@@ -148,6 +148,84 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(config),
     }),
+
+  getNotifications: (limit = 50, unreadOnly = false) =>
+    request<{ items: NotificationItem[]; unread_count: number }>(
+      `/api/notifications?limit=${limit}${unreadOnly ? "&unread_only=true" : ""}`,
+    ),
+
+  markNotificationsRead: (ids?: string[]) =>
+    request<{ modified_count: number }>("/api/notifications/read", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
+
+  clearNotifications: () =>
+    request<{ deleted_count: number }>("/api/notifications", {
+      method: "DELETE",
+    }),
+
+  getAlertTargets: () =>
+    request<{ targets: AlertTarget[] }>("/api/notifications/targets"),
+
+  updateAlertTarget: (
+    symbol: string,
+    payload: {
+      entry?: number | null;
+      stop?: number | null;
+      target?: number | null;
+      basis?: string | null;
+      enabled?: boolean;
+    },
+  ) =>
+    request<AlertTarget>(`/api/notifications/targets/${encodeSymbol(symbol)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  resetAlertTarget: (symbol: string) =>
+    request<{ symbol: string; reverted_to_ai: boolean }>(
+      `/api/notifications/targets/${encodeSymbol(symbol)}`,
+      { method: "DELETE" },
+    ),
+
+  checkAlertsNow: () =>
+    request<{
+      status: string;
+      evaluated_count: number;
+      triggered_count: number;
+      alerts: Array<{ id: string; symbol: string; alert_type: string; price: number; target_price: number }>;
+    }>("/api/notifications/check", {
+      method: "POST",
+    }),
+
+  simulateAlert: (payload: {
+    symbol: string;
+    alert_type: "entry_hit" | "target_hit" | "stop_hit";
+    current_price: number;
+    target_price: number;
+    basis?: string;
+    send_telegram?: boolean;
+  }) =>
+    request<NotificationItem>("/api/notifications/simulate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  getTelegramConfig: () =>
+    request<TelegramConfig>("/api/notifications/telegram"),
+
+  updateTelegramConfig: (payload: { bot_token?: string; chat_id?: string }) =>
+    request<TelegramConfig>("/api/notifications/telegram", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  testTelegramMessage: (payload?: { bot_token?: string; chat_id?: string; message?: string }) =>
+    request<{ status: string; message_id?: number }>("/api/notifications/telegram/test", {
+      method: "POST",
+      body: JSON.stringify(payload ?? {}),
+    }),
 };
 
 // ── Backend Analysis ────────────────────────────────────────────────────────
@@ -233,3 +311,48 @@ export function newsKey(opts: { symbol?: string; sentiment?: string; limit?: num
   params.set("limit", String(opts.limit ?? 50));
   return `/api/news?${params.toString()}`;
 }
+
+// ── Notifications & Price Alerts ───────────────────────────────────────────
+
+export interface NotificationItem {
+  id: string;
+  symbol: string;
+  name?: string | null;
+  alert_type: "entry_hit" | "target_hit" | "stop_hit";
+  current_price: number;
+  target_price: number;
+  basis?: string | null;
+  source: "ai" | "manual" | "simulation";
+  session_date: string;
+  created_at: string;
+  read: boolean;
+  simulated?: boolean;
+  telegram_status: "sent" | "skipped" | "error" | "pending";
+}
+
+export interface AlertTarget {
+  symbol: string;
+  name?: string | null;
+  current_price?: number | null;
+  entry?: number | null;
+  stop?: number | null;
+  target?: number | null;
+  basis?: string | null;
+  source: "ai" | "manual";
+  enabled: boolean;
+  entry_dist_pct?: number | null;
+  target_dist_pct?: number | null;
+  stop_dist_pct?: number | null;
+  entry_triggered_today: boolean;
+  target_triggered_today: boolean;
+  stop_triggered_today: boolean;
+}
+
+export interface TelegramConfig {
+  configured: boolean;
+  has_token: boolean;
+  has_chat_id: boolean;
+  chat_id: string;
+  masked_token: string;
+}
+

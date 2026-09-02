@@ -197,3 +197,28 @@ async def run_mid_day_cycle(
     analytics_res = await run_stockpicks_analytics(db, slot="mid_day", force=force)
     rec_res = await run_portfolio_recommendations(db, slot="mid_day", force=force)
     return {"analytics": analytics_res, "recommendations": rec_res}
+
+
+async def run_post_market_cycle(
+    db: AsyncIOMotorDatabase | None = None, *, force: bool = False
+) -> dict[str, Any]:
+    """17:00 WIB post-market cycle: stockpicks daily analytics + portfolio recommendations."""
+    from app.services.analytics import run_stockpicks_analytics
+    from app.services.recommendations import run_portfolio_recommendations
+
+    db = db if db is not None else get_db()
+    analytics_res = await run_stockpicks_analytics(db, slot="post_market", force=force)
+    rec_res = await run_portfolio_recommendations(db, slot="post_market", force=force)
+    return {"analytics": analytics_res, "recommendations": rec_res}
+
+
+async def check_price_alerts_job(
+    db: AsyncIOMotorDatabase | None = None, *, force: bool = False
+) -> dict[str, Any]:
+    """Check current market prices for watchlist against alert targets."""
+    from app.services.notifications import evaluate_watchlist_price_alerts
+
+    db = db if db is not None else get_db()
+    return await evaluate_watchlist_price_alerts(db, force=force)
+
+

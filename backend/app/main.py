@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import analytics, candles, news, portfolio, symbols, system
+from app.api import analytics, candles, news, notifications, portfolio, symbols, system
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.db.mongo import close_mongo, connect_to_mongo
@@ -47,6 +47,7 @@ app.include_router(candles.router)
 app.include_router(analytics.router)
 app.include_router(news.router)
 app.include_router(portfolio.router)
+app.include_router(notifications.router)
 app.include_router(system.router)
 
 

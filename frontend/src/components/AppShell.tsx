@@ -3,7 +3,7 @@
 // App frame from the design: fixed 240px sidebar + 64px topbar + scrollable
 // content column.
 
-import { LayoutDashboard, LineChart, LogOut, Newspaper, Settings, Wallet } from "lucide-react";
+import { Bell, LayoutDashboard, LineChart, LogOut, Newspaper, Settings, Wallet } from "lucide-react";
 import { signOut } from "next-auth/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -44,6 +44,12 @@ const NAV = [
     match: (p: string) => p.startsWith("/news"),
   },
   {
+    href: "/notifications",
+    label: "Notifications",
+    icon: Bell,
+    match: (p: string) => p.startsWith("/notifications"),
+  },
+  {
     href: "/settings",
     label: "Settings",
     icon: Settings,
@@ -55,6 +61,7 @@ function pageTitle(pathname: string): string {
   if (pathname.startsWith("/portfolio")) return "Portfolio";
   if (pathname.startsWith("/stocks")) return "Stock analysis";
   if (pathname.startsWith("/news")) return "News";
+  if (pathname.startsWith("/notifications")) return "Notifications";
   if (pathname.startsWith("/settings")) return "Settings";
   return "Dashboard";
 }
@@ -62,6 +69,11 @@ function pageTitle(pathname: string): string {
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const user = useSessionUser();
+  const { data: notifData } = useSWR<{ unread_count?: number }>("/api/notifications?limit=1", (url: string) =>
+    fetch(url).then((r) => (r.ok ? r.json() : null)),
+    { refreshInterval: 15_000 }
+  );
+  const unreadCount = notifData?.unread_count ?? 0;
 
   // The login page draws its own full-viewport layout.
   if (pathname === "/login") return <>{children}</>;
@@ -111,6 +123,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         {NAV.map(({ href, label, icon: Icon, match }) => {
           const active = match(pathname);
+          const isNotif = href === "/notifications";
           return (
             <Link
               key={href}
@@ -133,7 +146,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 size={18}
                 style={{ color: active ? "var(--color-primary)" : "var(--color-muted)" }}
               />
-              <span>{label}</span>
+              <span style={{ flex: 1 }}>{label}</span>
+              {isNotif && unreadCount > 0 && (
+                <span
+                  style={{
+                    background: "var(--color-primary)",
+                    color: "#fff",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: "2px 7px",
+                    borderRadius: 10,
+                  }}
+                >
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              )}
             </Link>
           );
         })}

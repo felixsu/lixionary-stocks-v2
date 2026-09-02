@@ -1,13 +1,14 @@
 "use client";
 
-import { Eye, EyeOff, Plus, X } from "lucide-react";
+import { Check, CheckCircle2, Eye, EyeOff, HelpCircle, Plus, Send, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 
+import { Badge } from "@/components/Badge";
 import { ErrorCard } from "@/components/ErrorCard";
 import { Skeleton } from "@/components/Skeleton";
 import { TimeframeSwitcher } from "@/components/TimeframeSwitcher";
-import { ApiError, type SymbolOut, api, fetcher } from "@/lib/api";
+import { ApiError, type SymbolOut, type TelegramConfig, api, fetcher } from "@/lib/api";
 import { MAX_FAVORITES, useDefaultTimeframe, useFavorites } from "@/lib/favorites";
 import { PROVIDERS, chat, fetchModels, providerById, useLlmSettings } from "@/lib/llm";
 
@@ -185,6 +186,190 @@ function LlmSettingsCard() {
         {!configured && (
           <span className="caption" style={{ color: "var(--color-muted-soft)" }}>
             AI analysis stays disabled until provider, model, and key are all set.
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TelegramSettingsCard() {
+  const { data: config, mutate } = useSWR<TelegramConfig>("/api/notifications/telegram", fetcher);
+  const [botToken, setBotToken] = useState("");
+  const [chatId, setChatId] = useState("");
+  const [showToken, setShowToken] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    if (config?.chat_id && !chatId) {
+      setChatId(config.chat_id);
+    }
+  }, [config, chatId]);
+
+  async function handleSave() {
+    setSaving(true);
+    setSaveSuccess(false);
+    try {
+      await api.updateTelegramConfig({
+        bot_token: botToken.trim() || undefined,
+        chat_id: chatId.trim() || undefined,
+      });
+      mutate();
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (err) {
+      alert(`Failed to save Telegram settings: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleTest() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      await api.testTelegramMessage({
+        bot_token: botToken.trim() || undefined,
+        chat_id: chatId.trim() || undefined,
+      });
+      setTestResult({ ok: true, message: "Test notification delivered! Check your Telegram." });
+    } catch (err) {
+      setTestResult({ ok: false, message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="field-label" style={{ margin: 0 }}>
+              Profile & Telegram Notifications
+            </span>
+            {config?.configured ? (
+              <Badge className="badge-success">Connected</Badge>
+            ) : (
+              <Badge className="badge-default">Not configured</Badge>
+            )}
+          </div>
+          <p className="body-sm" style={{ margin: "4px 0 0 0", color: "var(--color-muted)" }}>
+            Receive instant price alert notifications on Telegram when watchlist stocks hit entry, target, or stop loss levels.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={() => setShowGuide((v) => !v)}
+          style={{ display: "flex", alignItems: "center", gap: 4 }}
+        >
+          <HelpCircle size={14} /> {showGuide ? "Hide Setup Guide" : "Bot Setup Guide"}
+        </button>
+      </div>
+
+      {showGuide && (
+        <div
+          className="well"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            fontSize: 13,
+            lineHeight: 1.6,
+            background: "var(--color-surface-cream-strong)",
+          }}
+        >
+          <div style={{ fontWeight: 600, color: "var(--color-ink)" }}>Quick 3-step Telegram Bot Setup:</div>
+          <ol style={{ margin: 0, paddingLeft: 20 }}>
+            <li>
+              <b>Create Bot:</b> Open Telegram, message <code>@BotFather</code>, send <code>/newbot</code>, follow the prompts, and copy the HTTP API Token.
+            </li>
+            <li>
+              <b>Get Chat ID:</b> Search for <code>@userinfobot</code> on Telegram, send <code>/start</code>, and copy your numeric <b>Id</b> (e.g. <code>123456789</code>).
+            </li>
+            <li>
+              <b>Start Chat:</b> Open your newly created bot on Telegram and click <b>Start</b> (bots cannot initiate messages first).
+            </li>
+          </ol>
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div>
+          <label className="field-label">Telegram User ID / Chat ID</label>
+          <input
+            type="text"
+            className="input"
+            style={{ width: "100%" }}
+            placeholder="e.g. 123456789"
+            value={chatId}
+            onChange={(e) => setChatId(e.target.value)}
+          />
+          <span className="caption" style={{ color: "var(--color-muted)" }}>
+            Your numeric Telegram ID from @userinfobot
+          </span>
+        </div>
+
+        <div>
+          <label className="field-label">Telegram Bot Token</label>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              type={showToken ? "text" : "password"}
+              className="input"
+              style={{ flex: 1 }}
+              placeholder={config?.masked_token ? `Configured (${config.masked_token})` : "e.g. 123456:ABC-DEF..."}
+              value={botToken}
+              onChange={(e) => setBotToken(e.target.value)}
+            />
+            <button
+              type="button"
+              className="btn-icon"
+              style={{ width: 38, height: 38 }}
+              onClick={() => setShowToken((v) => !v)}
+              title={showToken ? "Hide token" : "Show token"}
+            >
+              {showToken ? <EyeOff size={15} /> : <Eye size={15} />}
+            </button>
+          </div>
+          <span className="caption" style={{ color: "var(--color-muted)" }}>
+            HTTP API token issued by @BotFather
+          </span>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            disabled={saving || (!chatId && !botToken)}
+            onClick={handleSave}
+          >
+            {saving ? "Saving…" : saveSuccess ? "Saved!" : "Save Telegram Settings"}
+          </button>
+
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={testing || (!config?.configured && !botToken && !chatId)}
+            onClick={handleTest}
+          >
+            <Send size={13} /> {testing ? "Sending…" : "Send Test Message"}
+          </button>
+        </div>
+
+        {testResult && (
+          <span
+            className="caption"
+            style={{ color: testResult.ok ? "var(--color-success)" : "var(--color-error)" }}
+          >
+            {testResult.message}
           </span>
         )}
       </div>
@@ -449,6 +634,9 @@ export default function SettingsPage() {
 
       {/* ── LLM configuration ──────────────────────────────────────────── */}
       <LlmSettingsCard />
+
+      {/* ── Telegram Notifications ─────────────────────────────────────── */}
+      <TelegramSettingsCard />
 
       {/* ── Default timeframe ──────────────────────────────────────────── */}
       <div className="card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>

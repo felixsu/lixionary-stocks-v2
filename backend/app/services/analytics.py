@@ -11,7 +11,7 @@ import json
 import math
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -45,19 +45,65 @@ MAX_STOCKPICKS = 10
 DETAIL_LIMIT = 200
 MAX_LEVEL_DRIFT = 0.4
 
-SYSTEM_PROMPT = """You are a technical analyst covering Indonesia Stock Exchange (IDX) equities. You are given computed indicator data for one stock on one timeframe; the price feed is delayed about 10 minutes. Analyse ONLY the data provided — do not invent news, fundamentals, or prices.
+SYSTEM_PROMPT = """You are an equity and technical analyst covering Indonesia Stock Exchange (IDX) equities. You are given computed indicator data and recent relevant news items (if any) for one stock on one timeframe; the price feed is delayed about 10 minutes. Analyse ONLY the data provided — do not invent news, fundamentals, or prices.
 
 Respond with a single JSON object, no markdown fences, exactly this shape:
 {"stance": "bullish"|"bearish"|"neutral", "summary": "<one sentence overall read>", "bullets": ["<3 to 5 short observations grounded in the data>"], "risks": ["<1 to 2 things that would invalidate this read>"], "trade_plan": {"entry": <number|null>, "stop": <number|null>, "target": <number|null>, "basis": "<one line naming the levels these are anchored to>"}}
 
-Rules for trade_plan — the user trades long only, so never propose a short:
-- entry: the price to buy at. Use null when nothing in the data supports a long right now (a bearish read, or price extended far above every support). Do not invent an entry just to fill the field.
-- stop: the price that invalidates the read. Give one whenever you give an entry, AND also when stance is bearish — a holder needs an exit level exactly then. It must sit below entry, below a structural level (support, kijun, cloud bottom, a swing low), and further than 1x atr14 from entry so ordinary volatility does not trigger it.
-- target: the first realistic objective above entry — usually resistance or the next structural level. Null if the data defines none. Aim for at least 1.5x the entry-to-stop distance; if no target that far is justified by the data, say so in basis rather than inventing one.
-- Every price must be a plain number in rupiah, already rounded to the stock's tick_size given in the payload. No strings, no ranges, no currency symbols.
-- basis: name the actual levels, e.g. "entry on pullback to kijun 745; stop below the 40-bar swing low 700; target at resistance 830".
+Guidance:
+- Synthesize technical indicators with recent news: when relevant news items are provided in recent_news, incorporate their sentiment and catalysts into the summary, bullet points (citing headlines where relevant), and risks. When recent_news is empty, rely purely on technical indicators.
+- Rules for trade_plan — the user trades long only, so never propose a short:
+  - entry: the price to buy at. Use null when nothing in the data supports a long right now (a bearish read, or price extended far above every support). Do not invent an entry just to fill the field.
+  - stop: the price that invalidates the read. Give one whenever you give an entry, AND also when stance is bearish — a holder needs an exit level exactly then. It must sit below entry, below a structural level (support, kijun, cloud bottom, a swing low), and further than 1x atr14 from entry so ordinary volatility does not trigger it.
+  - target: the first realistic objective above entry — usually resistance or the next structural level. Null if the data defines none. Aim for at least 1.5x the entry-to-stop distance; if no target that far is justified by the data, say so in basis rather than inventing one.
+  - Every price must be a plain number in rupiah, already rounded to the stock's tick_size given in the payload. No strings, no ranges, no currency symbols.
+  - basis: name the actual levels, e.g. "entry on pullback to kijun 745; stop below the 40-bar swing low 700; target at resistance 830".
 
-Be specific and quantitative (cite the numbers you were given). This is informational analysis, not investment advice, and the app already displays a disclaimer — do not add one."""
+Be specific and quantitative (cite the numbers and headlines you were given). This is informational analysis, not investment advice, and the app already displays a disclaimer — do not add one."""
+
+
+async def get_recent_news_for_symbol(
+    db: AsyncIOMotorDatabase,
+    symbol: str,
+    now: datetime,
+    days: int = 7,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Fetch up to `limit` relevant news items published in the last `days` days."""
+    cutoff = now - timedelta(days=days)
+    news_items: list[dict[str, Any]] = []
+    try:
+        cursor = (
+            db.news_items.find(
+                {
+                    "analysis.relevant": True,
+                    "analysis.symbols.symbol": symbol,
+                    "published_at": {"$gte": cutoff},
+                },
+                {"_id": 0, "title": 1, "summary": 1, "published_at": 1, "analysis": 1},
+            )
+            .sort("published_at", -1)
+            .limit(limit)
+        )
+        async for doc in cursor:
+            an = doc.get("analysis") or {}
+            matching_sym = next(
+                (s for s in an.get("symbols", []) if s.get("symbol") == symbol), None
+            )
+            pub = doc.get("published_at")
+            news_items.append({
+                "title": doc.get("title", ""),
+                "summary": doc.get("summary", ""),
+                "published_at": pub.isoformat() if isinstance(pub, datetime) else str(pub or ""),
+                "market_sentiment": an.get("sentiment", "neutral"),
+                "impact": an.get("impact", "low"),
+                "direction": matching_sym.get("direction") if matching_sym else None,
+                "reason": matching_sym.get("reason") if matching_sym else an.get("note"),
+            })
+    except Exception as exc:
+        log.warning("analytics.news_fetch_failed", symbol=symbol, error=str(exc))
+
+    return news_items
 
 
 async def get_stockpicks(db: AsyncIOMotorDatabase) -> list[str]:
@@ -229,7 +275,10 @@ async def analyze_symbol(
     meta_doc = await db.symbols.find_one({"symbol": sym}, {"_id": 0, "name": 1})
     name = meta_doc.get("name") if meta_doc else None
 
-    # 7. Build LLM payload
+    # 7. Fetch recent relevant news for symbol (7-day window, top 5)
+    recent_news = await get_recent_news_for_symbol(db, sym, now_dt, days=7, limit=5)
+
+    # 8. Build LLM payload
     i = len(bars) - 1
     cloud_top = max(ichi["senkouA"][i], ichi["senkouB"][i])
     cloud_bottom = min(ichi["senkouA"][i], ichi["senkouB"][i])
@@ -297,9 +346,10 @@ async def analyze_symbol(
                 for s in scorecard["signals"]
             ],
         },
+        "recent_news": recent_news,
     }
 
-    # 8. Call LLM
+    # 9. Call LLM
     cfg = await llm.get_effective_llm_config(db)
     raw_reply = await llm.chat(
         [
@@ -315,7 +365,7 @@ async def analyze_symbol(
     analysis_doc = {
         "symbol": sym,
         "timeframe": timeframe.value,
-        "slot": slot,  # "pre_market" | "mid_day" | "ad_hoc"
+        "slot": slot,  # "pre_market" | "mid_day" | "post_market" | "ad_hoc"
         "price": price,
         "stance": parsed["stance"],
         "summary": parsed["summary"],
@@ -338,7 +388,7 @@ async def analyze_symbol(
 
 async def run_stockpicks_analytics(
     db: AsyncIOMotorDatabase,
-    slot: str,  # "pre_market" | "mid_day"
+    slot: str,  # "pre_market" | "mid_day" | "post_market"
     *,
     force: bool = False,
     now: datetime | None = None,
@@ -357,7 +407,7 @@ async def run_stockpicks_analytics(
         log.warning("analytics.skipped_llm_not_configured", slot=slot)
         return {"run_id": run_id, "status": "skipped", "reason": "llm_not_configured"}
 
-    timeframe = Timeframe.D1 if slot == "pre_market" else Timeframe.H1
+    timeframe = Timeframe.H1 if slot == "mid_day" else Timeframe.D1
     stockpicks = await get_stockpicks(db)
     results: list[dict[str, Any]] = []
     errors: list[str] = []

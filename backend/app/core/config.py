@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     llm_model: str = ""
     llm_api_key: str = ""
 
+    # --- Telegram Notifications (Optional, can also be configured in Settings UI) ---
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+
     # --- Retention ---
     ingest_runs_ttl_days: int = 30
 
