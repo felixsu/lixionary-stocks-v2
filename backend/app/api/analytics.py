@@ -22,6 +22,7 @@ class FavoritesIn(BaseModel):
 
 class RunRequest(BaseModel):
     slot: str = Field(default="ad_hoc", pattern="^(pre_market|mid_day|post_market|ad_hoc)$")
+    timeframe: str = Field(default="both", pattern="^(both|1d|1h|auto)$")
 
 
 @router.get("/favorites")
@@ -62,11 +63,13 @@ async def get_latest_analysis(
     return doc
 
 
-async def _run_analytics_task(run_id: str, slot: str) -> None:
+async def _run_analytics_task(run_id: str, slot: str, timeframe: str) -> None:
     try:
-        await svc.run_stockpicks_analytics(get_db(), slot=slot, force=True)
+        await svc.run_stockpicks_analytics(
+            get_db(), slot=slot, force=True, timeframe_choice=timeframe
+        )
     except Exception as exc:  # noqa: BLE001
-        log.warning("analytics.manual_run_failed", run_id=run_id, slot=slot, error=str(exc))
+        log.warning("analytics.manual_run_failed", run_id=run_id, slot=slot, timeframe=timeframe, error=str(exc))
 
 
 @router.post("/run", response_model=RunAccepted, status_code=202)
@@ -76,8 +79,9 @@ async def trigger_analytics_run(
     """Trigger an on-demand analytics batch run for all stockpicks."""
     run_id = uuid.uuid4().hex
     slot = payload.slot if payload else "ad_hoc"
-    background.add_task(_run_analytics_task, run_id, slot)
-    return RunAccepted(run_id=run_id, detail=f"analytics run started for slot {slot}")
+    timeframe = payload.timeframe if payload else "both"
+    background.add_task(_run_analytics_task, run_id, slot, timeframe)
+    return RunAccepted(run_id=run_id, detail=f"analytics run started for slot {slot} (timeframe: {timeframe})")
 
 
 async def _run_symbol_analysis_task(run_id: str, symbol: str, timeframe: Timeframe, slot: str) -> None:

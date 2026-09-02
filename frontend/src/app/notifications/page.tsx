@@ -296,7 +296,7 @@ export default function NotificationsPage() {
               ) : (
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <Badge className="badge-default">Not configured</Badge>
-                  <Link href="/settings" className="caption" style={{ color: "var(--color-primary)", textDecoration: "none" }}>
+                  <Link href="/settings?tab=telegram" className="caption" style={{ color: "var(--color-primary)", textDecoration: "none" }}>
                     Configure →
                   </Link>
                 </div>
@@ -330,7 +330,7 @@ export default function NotificationsPage() {
         ) : targets.length === 0 ? (
           <div className="well" style={{ textAlign: "center", padding: 24 }}>
             <span className="body-sm" style={{ color: "var(--color-muted)" }}>
-              No watchlist favorites yet. Add stocks in <Link href="/settings">Settings</Link> to start monitoring.
+              No watchlist favorites yet. Add stocks in <Link href="/settings?tab=watchlist">Settings</Link> to start monitoring.
             </span>
           </div>
         ) : (

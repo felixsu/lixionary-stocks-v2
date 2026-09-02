@@ -388,12 +388,13 @@ async def analyze_symbol(
 
 async def run_stockpicks_analytics(
     db: AsyncIOMotorDatabase,
-    slot: str,  # "pre_market" | "mid_day" | "post_market"
+    slot: str,  # "pre_market" | "mid_day" | "post_market" | "ad_hoc"
     *,
     force: bool = False,
     now: datetime | None = None,
+    timeframe_choice: str = "auto",  # "auto" | "both" | "1d" | "1h"
 ) -> dict[str, Any]:
-    """Run scheduled analytics batch for all stockpicks."""
+    """Run scheduled or on-demand analytics batch for all stockpicks."""
     run_id = uuid.uuid4().hex
     started = datetime.now(UTC)
     now_dt = now or started
@@ -407,22 +408,32 @@ async def run_stockpicks_analytics(
         log.warning("analytics.skipped_llm_not_configured", slot=slot)
         return {"run_id": run_id, "status": "skipped", "reason": "llm_not_configured"}
 
-    timeframe = Timeframe.H1 if slot == "mid_day" else Timeframe.D1
+    if timeframe_choice == "both":
+        timeframes = [Timeframe.D1, Timeframe.H1]
+    elif timeframe_choice == "1d":
+        timeframes = [Timeframe.D1]
+    elif timeframe_choice == "1h":
+        timeframes = [Timeframe.H1]
+    else:
+        timeframes = [Timeframe.H1] if slot == "mid_day" else [Timeframe.D1]
+
     stockpicks = await get_stockpicks(db)
     results: list[dict[str, Any]] = []
     errors: list[str] = []
 
-    for sym in stockpicks:
-        try:
-            res = await analyze_symbol(db, sym, timeframe, slot=slot, now=now_dt)
-            results.append(res)
-        except Exception as exc:  # noqa: BLE001
-            err_msg = f"{sym}: {type(exc).__name__}: {exc}"
-            errors.append(err_msg)
-            log.warning("analytics.symbol_failed", symbol=sym, slot=slot, error=str(exc))
+    for tf in timeframes:
+        for sym in stockpicks:
+            try:
+                res = await analyze_symbol(db, sym, tf, slot=slot, now=now_dt)
+                results.append(res)
+            except Exception as exc:  # noqa: BLE001
+                err_msg = f"{sym} ({tf.value}): {type(exc).__name__}: {exc}"
+                errors.append(err_msg)
+                log.warning("analytics.symbol_failed", symbol=sym, timeframe=tf.value, slot=slot, error=str(exc))
 
     status = "ok" if not errors else "partial" if results else "failed"
     duration_ms = int((datetime.now(UTC) - started).total_seconds() * 1000)
+    tf_str = ",".join(t.value for t in timeframes)
 
     # Audit log to ingest_runs
     await db.ingest_runs.insert_one(
@@ -430,9 +441,9 @@ async def run_stockpicks_analytics(
             "run_id": run_id,
             "kind": "analytics",
             "symbol": None,
-            "timeframe": timeframe.value,
+            "timeframe": tf_str,
             "status": status,
-            "bars_fetched": len(stockpicks),
+            "bars_fetched": len(stockpicks) * len(timeframes),
             "bars_upserted": len(results),
             "bars_modified": len(errors),
             "error": "; ".join(errors) if errors else None,
@@ -446,7 +457,7 @@ async def run_stockpicks_analytics(
     log.info(
         "analytics.cycle_finished",
         slot=slot,
-        timeframe=timeframe.value,
+        timeframe=tf_str,
         success=len(results),
         failed=len(errors),
         duration_ms=duration_ms,
@@ -455,7 +466,7 @@ async def run_stockpicks_analytics(
     return {
         "run_id": run_id,
         "slot": slot,
-        "timeframe": timeframe.value,
+        "timeframe": tf_str,
         "analyzed_count": len(results),
         "error_count": len(errors),
         "status": status,

@@ -8,7 +8,6 @@ import useSWR from "swr";
 import { AllocationDonut } from "@/components/AllocationDonut";
 import { Badge } from "@/components/Badge";
 import { ErrorCard } from "@/components/ErrorCard";
-import { PortfolioChat } from "@/components/PortfolioChat";
 import { Skeleton } from "@/components/Skeleton";
 import { type SymbolOut, fetcher } from "@/lib/api";
 import { useLlmSettings } from "@/lib/llm";
@@ -252,6 +251,176 @@ function CashTile({
         >
           <Pencil size={12} />
         </button>
+      )}
+    </div>
+  );
+}
+
+function ActionSuggestionsCard({
+  positions,
+  configured,
+  recBusy,
+  onGetRecommendations,
+}: {
+  positions: Position[];
+  configured: boolean;
+  recBusy: boolean;
+  onGetRecommendations: () => void;
+}) {
+  const withRecs = positions.filter((p) => p.recommendation != null);
+
+  // Counts by action
+  const counts = withRecs.reduce((acc, p) => {
+    const act = p.recommendation!.action;
+    acc[act] = (acc[act] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  return (
+    <div className="card" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="field-label" style={{ margin: 0 }}>Action Suggestions</span>
+            {withRecs.length > 0 && (
+              <span className="caption" style={{ color: "var(--color-muted)" }}>
+                ({withRecs.length}/{positions.length})
+              </span>
+            )}
+          </div>
+          <p className="caption" style={{ margin: "2px 0 0 0", color: "var(--color-muted)" }}>
+            AI-driven buy, hold, or exit suggestions based on technical setups and recent news.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          disabled={recBusy || !configured || positions.length === 0}
+          onClick={onGetRecommendations}
+          title={!configured ? "Configure LLM in Settings first" : undefined}
+          style={{ flexShrink: 0 }}
+        >
+          <Sparkles size={13} className={recBusy ? "lx-spin" : undefined} />
+          {recBusy ? "Analyzing…" : withRecs.length > 0 ? "Refresh" : "Analyze"}
+        </button>
+      </div>
+
+      {!configured ? (
+        <div className="well" style={{ display: "flex", flexDirection: "column", gap: 6, padding: "12px 14px" }}>
+          <span className="body-sm" style={{ color: "var(--color-muted)" }}>
+            Suggestions require an AI model configured in Settings.
+          </span>
+          <Link href="/settings?tab=ai" className="caption" style={{ color: "var(--color-primary)", textDecoration: "none" }}>
+            Configure LLM Provider →
+          </Link>
+        </div>
+      ) : positions.length === 0 ? (
+        <div className="well" style={{ padding: "16px", textAlign: "center" }}>
+          <span className="caption" style={{ color: "var(--color-muted)" }}>
+            Add positions to get portfolio-wide action suggestions.
+          </span>
+        </div>
+      ) : withRecs.length === 0 ? (
+        <div className="well" style={{ padding: "20px 16px", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+          <Sparkles size={22} style={{ color: "var(--color-primary)", opacity: 0.7 }} />
+          <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-ink)" }}>
+            No recommendations generated yet
+          </div>
+          <p className="caption" style={{ color: "var(--color-muted)", margin: 0 }}>
+            Click &ldquo;Analyze&rdquo; to evaluate all {positions.length} holdings against current technicals and catalysts.
+          </p>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            disabled={recBusy}
+            onClick={onGetRecommendations}
+            style={{ marginTop: 4 }}
+          >
+            <Sparkles size={13} className={recBusy ? "lx-spin" : undefined} />
+            {recBusy ? "Analyzing…" : "Analyze Holdings Now"}
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* Action summary pills */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingBottom: 8, borderBottom: "1px solid var(--color-hairline)" }}>
+            {Boolean(counts.add_more) && (
+              <Badge className="badge-success" small>
+                {counts.add_more} Add more
+              </Badge>
+            )}
+            {Boolean(counts.take_profit) && (
+              <Badge className="badge-success" small>
+                {counts.take_profit} Take profit
+              </Badge>
+            )}
+            {Boolean(counts.hold) && (
+              <Badge className="badge-default" small>
+                {counts.hold} Hold
+              </Badge>
+            )}
+            {Boolean(counts.reduce) && (
+              <Badge className="badge-warning" small>
+                {counts.reduce} Reduce
+              </Badge>
+            )}
+            {Boolean(counts.cut_loss) && (
+              <Badge className="badge-error" small>
+                {counts.cut_loss} Cut loss
+              </Badge>
+            )}
+          </div>
+
+          {/* Cards for each position with recommendation */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 420, overflowY: "auto", paddingRight: 2 }}>
+            {withRecs.map((p) => {
+              const rec = p.recommendation!;
+              return (
+                <div
+                  key={p.symbol}
+                  className="well"
+                  style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6 }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <Link
+                      href={`/stocks/${encodeURIComponent(p.symbol)}`}
+                      style={{ fontWeight: 600, color: "var(--color-ink)", textDecoration: "none", fontSize: 14 }}
+                    >
+                      {p.symbol}
+                    </Link>
+                    <Badge className={REC_BADGE[rec.action]} small>
+                      {REC_LABEL[rec.action]}
+                    </Badge>
+                  </div>
+
+                  {rec.summary && (
+                    <div style={{ fontSize: 13, color: "var(--color-ink)", lineHeight: 1.45 }}>
+                      {rec.summary}
+                    </div>
+                  )}
+
+                  {rec.reasons && rec.reasons.length > 0 && (
+                    <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "var(--color-muted)", lineHeight: 1.5 }}>
+                      {rec.reasons.slice(0, 3).map((r, i) => (
+                        <li key={i}>{r}</li>
+                      ))}
+                    </ul>
+                  )}
+
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                    <span className="caption" style={{ color: "var(--color-muted-soft)", fontSize: 11 }}>
+                      {new Date(rec.generated_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })} · {new Date(rec.generated_at).toLocaleDateString("id-ID", { month: "short", day: "numeric" })}
+                    </span>
+                    <span className="caption" style={{ color: "var(--color-muted-soft)", fontSize: 11 }}>
+                      {rec.model}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -535,7 +704,7 @@ export default function PortfolioPage() {
           </span>
         </div>
 
-        {/* ── Allocation + chat ─────────────────────────────────────────── */}
+        {/* ── Allocation + Action Suggestions ─────────────────────────── */}
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
           {data && (
             <div className="card" style={{ padding: 16 }}>
@@ -543,10 +712,11 @@ export default function PortfolioPage() {
               <AllocationDonut portfolio={data} />
             </div>
           )}
-          <PortfolioChat
-            portfolio={data ?? null}
-            symbols={symbols ?? []}
-            onPortfolioChanged={() => portfolio.mutate()}
+          <ActionSuggestionsCard
+            positions={data?.positions ?? []}
+            configured={configured}
+            recBusy={recBusy}
+            onGetRecommendations={getRecommendations}
           />
         </div>
       </div>

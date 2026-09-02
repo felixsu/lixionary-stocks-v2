@@ -1,6 +1,6 @@
 "use client";
 
-import { GitCompare, Minimize2 } from "lucide-react";
+import { Calendar, ChevronDown, Clock, GitCompare, Minimize2, Sparkles, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 import useSWR from "swr";
@@ -15,12 +15,13 @@ import {
   type CandlesOut,
   type SymbolOut,
   IHSG_SYMBOL,
+  api,
   candlesKey,
   fetcher,
 } from "@/lib/api";
 import { drawPriceVolume } from "@/lib/chart-draw";
 import { type XViewport, clampViewport } from "@/lib/viewport";
-import { useDefaultTimeframe, useFavorites } from "@/lib/favorites";
+import { MAX_FAVORITES, useDefaultTimeframe, useFavorites } from "@/lib/favorites";
 import { correlation, returns } from "@/lib/indicators";
 import {
   badgeClassForPct,
@@ -180,6 +181,34 @@ export default function DashboardPage() {
   const [tfOverride, setTfOverride] = useState<TimeframeId | null>(null);
   const [expandedCode, setExpandedCode] = useState<string | null>(null);
   const tf = tfOverride ?? defaultTimeframe;
+
+  const [reanalyzing, setReanalyzing] = useState(false);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  const handleReanalyze = useCallback(
+    async (choice: "both" | "1d" | "1h") => {
+      if (favorites.length === 0) return;
+      setReanalyzing(true);
+      setStatusMessage(null);
+      try {
+        await api.runAnalytics("ad_hoc", choice);
+        const tfText =
+          choice === "both"
+            ? "Daily (1d) & Hourly (1h)"
+            : choice === "1d"
+            ? "Daily (1d)"
+            : "Hourly (1h)";
+        setStatusMessage(`Re-analysis queued for ${favorites.length} watchlist stocks (${tfText}).`);
+        setTimeout(() => setStatusMessage(null), 6000);
+      } catch (err) {
+        setStatusMessage(`Re-analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        setReanalyzing(false);
+      }
+    },
+    [favorites.length],
+  );
 
   // Shared X viewport across the IHSG and comparison charts.
   const [viewport, setViewport] = useState<XViewport>({ offset: 0, count: INITIAL_VIEW["1d"] });
@@ -364,12 +393,135 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h5 style={{ margin: 0 }}>Your stockpicks</h5>
-        <a href="/settings" style={{ fontSize: 13, textDecoration: "none" }}>
-          Manage favorites
-        </a>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <h5 style={{ margin: 0 }}>Your stockpicks</h5>
+          <span className="caption" style={{ color: "var(--color-muted)" }}>
+            ({favorites.length}/{MAX_FAVORITES})
+          </span>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {/* Split Re-analyze button */}
+          <div style={{ position: "relative" }}>
+            <div style={{ display: "inline-flex", borderRadius: 8 }}>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={reanalyzing || favorites.length === 0}
+                onClick={() => handleReanalyze("both")}
+                title="Re-analyze all watchlist stocks on both Daily (1d) and Hourly (1h) timeframes"
+                style={{
+                  borderTopRightRadius: 0,
+                  borderBottomRightRadius: 0,
+                  borderRight: "1px solid var(--color-hairline)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <Sparkles size={13} className={reanalyzing ? "lx-spin" : undefined} style={{ color: "var(--color-primary)" }} />
+                {reanalyzing ? "Analyzing…" : "Re-analyze All (1D + 1H)"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={reanalyzing || favorites.length === 0}
+                onClick={() => setDropdownOpen((v) => !v)}
+                title="Choose timeframe"
+                style={{
+                  borderTopLeftRadius: 0,
+                  borderBottomLeftRadius: 0,
+                  padding: "0 8px",
+                }}
+              >
+                <ChevronDown size={14} />
+              </button>
+            </div>
+
+            {dropdownOpen && (
+              <div
+                className="card"
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  top: "100%",
+                  marginTop: 4,
+                  padding: 4,
+                  minWidth: 190,
+                  zIndex: 50,
+                  boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
+                }}
+              >
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  style={{ width: "100%", justifyContent: "flex-start", border: "none" }}
+                  onClick={() => {
+                    setDropdownOpen(false);
+                    handleReanalyze("both");
+                  }}
+                >
+                  <Sparkles size={13} style={{ color: "var(--color-primary)" }} />
+                  Both Daily + Hourly
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  style={{ width: "100%", justifyContent: "flex-start", border: "none" }}
+                  onClick={() => {
+                    setDropdownOpen(false);
+                    handleReanalyze("1d");
+                  }}
+                >
+                  <Calendar size={13} />
+                  Daily only (1D)
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  style={{ width: "100%", justifyContent: "flex-start", border: "none" }}
+                  onClick={() => {
+                    setDropdownOpen(false);
+                    handleReanalyze("1h");
+                  }}
+                >
+                  <Clock size={13} />
+                  Hourly only (1H)
+                </button>
+              </div>
+            )}
+          </div>
+
+          <a href="/settings?tab=watchlist" style={{ fontSize: 13, textDecoration: "none" }}>
+            Manage favorites
+          </a>
+        </div>
       </div>
+
+      {statusMessage && (
+        <div
+          className="well"
+          style={{
+            padding: "8px 14px",
+            background: "var(--color-surface-cream-strong)",
+            fontSize: 13,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <span>{statusMessage}</span>
+          <button
+            type="button"
+            className="btn-icon"
+            style={{ width: 22, height: 22 }}
+            onClick={() => setStatusMessage(null)}
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
 
       {favorites.length === 0 ? (
         <div
@@ -378,7 +530,7 @@ export default function DashboardPage() {
         >
           <p className="body-sm" style={{ margin: 0 }}>
             No favorites yet — pick up to 10 stocks in{" "}
-            <a href="/settings">Settings</a> to see them here.
+            <a href="/settings?tab=watchlist">Settings</a> to see them here.
           </p>
         </div>
       ) : (
